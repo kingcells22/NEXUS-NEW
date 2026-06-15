@@ -1,0 +1,13 @@
+# Carpetas pesadas y temporales
+backend/venv/
+backend/__pycache__/
+backend/uploads/
+*.pyc
+
+# Frontend
+node_modules/
+dist/
+
+# Archivos de VS Code
+.vscode/
+.DS_Store

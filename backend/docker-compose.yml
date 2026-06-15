@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  db-nexus:
+    image: postgres:16.2
+    container_name: nexus_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: nexus_admin
+      POSTGRES_PASSWORD: password_seguro_123
+      POSTGRES_DB: nexus_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - nexus_pgdata:/var/lib/postgresql/data
+
+  minio-nexus:
+    image: minio/minio
+    container_name: nexus_minio
+    restart: always
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio_admin
+      MINIO_ROOT_PASSWORD: password_minio_123
+    ports:
+      - "9000:9000" # Puerto del API para Python
+      - "9001:9001" # Puerto de la interfaz web
+    volumes:
+      - nexus_minio_data:/data
+
+volumes:
+  nexus_pgdata:
+  nexus_minio_data:

@@ -1,0 +1,325 @@
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Form
+from typing import List, Optional
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session
+from datetime import datetime, timedelta
+import os
+import shutil
+import jwt 
+import bcrypt 
+import base64
+
+# --- NUEVAS LIBRERÍAS PARA PDF (MÉTODO DE SUPERPOSICIÓN) ---
+import io
+import textwrap
+from pypdf import PdfReader, PdfWriter
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+
+from app.database import engine, Base, get_db
+from app import models, schemas
+
+# 1. Inicialización y creación de tablas
+Base.metadata.create_all(bind=engine)
+
+app = FastAPI(title="Nexus API Refactorizada")
+
+# Esto es lo que le abre la puerta al frontend de Vue
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"], # Tu frontend
+    allow_credentials=True,
+    allow_methods=["*"], # Permite GET, POST, OPTIONS, etc.
+    allow_headers=["*"],
+)
+
+# --- CONFIGURACIÓN DE SEGURIDAD JWT ---
+SECRET_KEY = "NEXUS_FIIIDT_SUPER_SECRETO_2026" 
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/login")
+
+def verificar_password(plain_password, hashed_password):
+    return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+
+def encriptar_password(password):
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
+    return hashed.decode('utf-8') 
+
+def crear_token_acceso(data: dict, expires_delta: timedelta):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + expires_delta
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+def get_usuario_actual(token: str = Depends(oauth2_scheme)):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        correo: str = payload.get("sub")
+        if correo is None:
+            raise HTTPException(status_code=401, detail="Token inválido.")
+        return payload 
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="El token ya expiró. Vuelve a iniciar sesión.")
+    except jwt.PyJWTError: 
+        raise HTTPException(status_code=401, detail="No tienes permiso para entrar aquí, acceso denegado.")
+
+UPLOAD_DIR = "uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# --- CONFIGURACIÓN DE DIRECTORIOS ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# -----------------------------------------------------------
+
+@app.get("/")
+def read_root():
+    return {"mensaje": "¡El backend de Nexus está corriendo al 100%!"}
+
+# ==========================================
+# MÓDULO DE USUARIOS, DOCUMENTOS Y BANDEJA
+# ==========================================
+
+@app.post("/api/usuarios", response_model=schemas.UsuarioRespuesta)
+def crear_usuario_completo(datos: schemas.RegistroCompletoCrear, db: Session = Depends(get_db)):
+    if db.query(models.Usuario).filter(models.Usuario.correo == datos.correo).first():
+        raise HTTPException(status_code=400, detail="Este correo ya está registrado.")
+    if db.query(models.Empleado).filter(models.Empleado.cedula == datos.cedula).first():
+        raise HTTPException(status_code=400, detail="Esta cédula ya está registrada.")
+
+    fecha_expiracion = datetime.utcnow() + timedelta(days=datos.validez_dias)
+
+    nuevo_usuario = models.Usuario(
+        correo=datos.correo,
+        password=encriptar_password(datos.password), 
+        fecha_expiracion_clave=fecha_expiracion,
+        pregunta_seguridad_1=datos.pregunta_seguridad_1,
+        respuesta_seguridad_1=datos.respuesta_seguridad_1,
+        pregunta_seguridad_2=datos.pregunta_seguridad_2,
+        respuesta_seguridad_2=datos.respuesta_seguridad_2,
+        rol="USER"
+    )
+    db.add(nuevo_usuario)
+    db.flush() 
+
+    centro_limpio = datos.centro.strip().upper()
+    centro_db = db.query(models.Centro).filter(models.Centro.nombre == centro_limpio).first()
+    if not centro_db:
+        centro_db = models.Centro(nombre=centro_limpio, abreviatura=centro_limpio)
+        db.add(centro_db)
+        db.flush()
+
+    cargo_limpio = datos.cargo.strip().upper()
+    cargo_db = db.query(models.Cargo).filter(models.Cargo.nombre == cargo_limpio).first()
+    if not cargo_db:
+        cargo_db = models.Cargo(nombre=cargo_limpio)
+        db.add(cargo_db)
+        db.flush()
+
+    nuevo_empleado = models.Empleado(
+        usuario_id=nuevo_usuario.id,
+        cedula=datos.cedula,
+        nombres_apellidos=datos.nombres_apellidos,
+        fecha_ingreso=datetime.utcnow() 
+    )
+    nuevo_empleado.centros.append(centro_db)
+    nuevo_empleado.cargos.append(cargo_db)
+    db.add(nuevo_empleado)
+    
+    db.commit()
+    db.refresh(nuevo_usuario)
+    return nuevo_usuario
+
+@app.post("/api/login")
+def iniciar_sesion(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    usuario = db.query(models.Usuario).filter(models.Usuario.correo == form_data.username).first()
+    if not usuario or not verificar_password(form_data.password, usuario.password):
+        raise HTTPException(status_code=401, detail="Correo o contraseña incorrectos.")
+
+    token_jwt = crear_token_acceso(
+        data={"sub": usuario.correo, "rol": usuario.rol}, 
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    )
+    return {"access_token": token_jwt, "token_type": "bearer", "rol": usuario.rol}
+
+@app.get("/api/me")
+def obtener_perfil_actual(db: Session = Depends(get_db), usuario_actual: dict = Depends(get_usuario_actual)):
+    usuario = db.query(models.Usuario).filter(models.Usuario.correo == usuario_actual["sub"]).first()
+    empleado = db.query(models.Empleado).filter(models.Empleado.usuario_id == usuario.id).first()
+    nombre_cargo = empleado.cargos[0].nombre if empleado.cargos else "Sin cargo"
+    nombre_centro = empleado.centros[0].nombre if empleado.centros else "Sin centro"
+    
+    return {
+        "usuario_id": usuario.id,
+        "empleado_id": empleado.id,
+        "correo": usuario.correo,
+        "rol": usuario.rol,
+        "cedula": empleado.cedula,
+        "nombres_apellidos": empleado.nombres_apellidos,
+        "cargo": nombre_cargo,
+        "centro": nombre_centro
+    }
+
+@app.post("/api/memorandums", response_model=schemas.MemorandumRespuesta)
+def crear_memorandum(memo: schemas.MemorandumCrear, db: Session = Depends(get_db), usuario_actual: dict = Depends(get_usuario_actual)):
+    nuevo_memo = models.Memorandum(
+        asunto=memo.asunto,
+        descripcion=memo.descripcion,
+        emisor_id=memo.emisor_id,
+        receptor_id=memo.receptor_id,
+        autoridad_id=memo.autoridad_id,
+        centro=memo.centro,
+        fecha=datetime.now(),
+        status="CREADO"
+    )
+    db.add(nuevo_memo)
+    db.commit()
+    db.refresh(nuevo_memo)
+    nuevo_memo.numero_documento = f"MEMO-2026-{nuevo_memo.id}"
+    db.commit()
+    return nuevo_memo
+
+@app.post("/api/puntos-cuenta", response_model=schemas.PuntoCuentaRespuesta)
+def crear_punto_cuenta(punto: schemas.PuntoCuentaCrear, db: Session = Depends(get_db), usuario_actual: dict = Depends(get_usuario_actual)):
+    nuevo_punto = models.PuntoCuenta(
+        a_quien=punto.a_quien,
+        asunto=punto.asunto,
+        sintesis=punto.sintesis,
+        presupuesto=punto.presupuesto,
+        emisor_id=punto.emisor_id,
+        autoridad_id=punto.autoridad_id,
+        fecha=datetime.now(),
+        status="CREADO"
+    )
+    db.add(nuevo_punto)
+    db.commit()
+    db.refresh(nuevo_punto)
+    nuevo_punto.numero_documento = f"PUNTO-2026-{nuevo_punto.id}"
+    db.commit()
+    return nuevo_punto
+
+@app.put("/api/documentos/{tipo_documento}/{doc_id}/estatus")
+def cambiar_estatus_documento(tipo_documento: str, doc_id: int, datos: schemas.DocumentoEstadoActualizar, db: Session = Depends(get_db), usuario_actual: dict = Depends(get_usuario_actual)):
+    tipo = tipo_documento.strip().lower()
+    if tipo == "memorandum": modelo = models.Memorandum
+    elif tipo == "oficio": modelo = models.Oficio
+    elif tipo == "punto_cuenta": modelo = models.PuntoCuenta
+    else: raise HTTPException(status_code=400, detail="Tipo de documento inválido.")
+    documento = db.query(modelo).filter(modelo.id == doc_id).first()
+    if not documento: raise HTTPException(status_code=404, detail="Documento no encontrado.")
+    documento.status = datos.status.strip().upper()
+    if documento.status == "RECHAZADO" and datos.observaciones_rechazo:
+        documento.observaciones_rechazo = datos.observaciones_rechazo
+    elif documento.status == "APROBADO":
+        documento.observaciones_rechazo = None 
+    db.commit()
+    return {"mensaje": f"El documento pasó a estatus: {documento.status}"}
+
+@app.get("/api/bandeja/pendientes")
+def obtener_bandeja_pendientes(db: Session = Depends(get_db), usuario_actual: dict = Depends(get_usuario_actual)):
+    usuario = db.query(models.Usuario).filter(models.Usuario.correo == usuario_actual["sub"]).first()
+    empleado = db.query(models.Empleado).filter(models.Empleado.usuario_id == usuario.id).first()
+    if not empleado: raise HTTPException(status_code=404, detail="Perfil de empleado no encontrado.")
+    estatus_pendientes = ["CREADO", "EN_REVISION"]
+    memos = db.query(models.Memorandum).filter(models.Memorandum.autoridad_id == empleado.id, models.Memorandum.status.in_(estatus_pendientes)).all()
+    puntos = db.query(models.PuntoCuenta).filter(models.PuntoCuenta.autoridad_id == empleado.id, models.PuntoCuenta.status.in_(estatus_pendientes)).all()
+    return {"memorandums": memos, "puntos_cuenta": puntos, "total_pendientes": len(memos) + len(puntos)}
+
+# ==========================================
+# MOTOR UNIVERSAL DE GENERACIÓN DE PDFs (100% DINÁMICO)
+# ==========================================
+@app.get("/api/documentos/{tipo_documento}/{doc_id}/generar-pdf")
+def generar_pdf_universal(tipo_documento: str, doc_id: int, db: Session = Depends(get_db)):
+    tipo = tipo_documento.strip().lower()
+    
+    # 1. BUSCAR CONFIGURACIÓN EN LA BASE DE DATOS (Cero Hardcode)
+    config_plantilla = db.query(models.PlantillaPDF).filter(models.PlantillaPDF.tipo_documento == tipo).first()
+    
+    if not config_plantilla:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"El documento '{tipo}' aún no tiene una plantilla ni coordenadas configuradas en el sistema."
+        )
+        
+    mapa_coordenadas = config_plantilla.coordenadas # Esto extrae el JSON de la BD
+    
+    # 2. BUSCAR EL DOCUMENTO EN LA BASE DE DATOS
+    datos_extraidos = {}
+    if tipo == "memorandum":
+        doc = db.query(models.Memorandum).filter(models.Memorandum.id == doc_id).first()
+        if not doc: raise HTTPException(status_code=404, detail="Memorándum no encontrado")
+        datos_extraidos = {
+            "receptor": doc.receptor.nombres_apellidos,
+            "emisor": doc.emisor.nombres_apellidos,
+            "fecha": doc.fecha.strftime("%d/%m/%Y"),
+            "asunto": doc.asunto,
+            "correlativo": doc.numero_documento,
+            "texto_largo": doc.descripcion
+        }
+        
+    elif tipo == "punto_cuenta":
+        doc = db.query(models.PuntoCuenta).filter(models.PuntoCuenta.id == doc_id).first()
+        if not doc: raise HTTPException(status_code=404, detail="Punto de Cuenta no encontrado")
+        datos_extraidos = {
+            "receptor": doc.a_quien,
+            "emisor": doc.emisor.nombres_apellidos,
+            "fecha": doc.fecha.strftime("%d/%m/%Y"),
+            "asunto": doc.asunto,
+            "correlativo": doc.numero_documento,
+            "texto_largo": doc.sintesis
+        }
+    else:
+        raise HTTPException(status_code=400, detail="Estructura de datos no definida para este tipo de documento.")
+
+    # 3. DIBUJAR LA CAPA DE TEXTO LEYENDO LA BASE DE DATOS
+    packet = io.BytesIO()
+    can = canvas.Canvas(packet, pagesize=letter)
+    can.setFont("Helvetica", 11)
+
+    # El ciclo lee el JSON de la BD: ej. {"receptor": {"x": 130, "y": 610, "align": "L"}}
+    textos_cortos = mapa_coordenadas.get("textos", {})
+    for clave_campo, reglas in textos_cortos.items():
+        texto_a_dibujar = datos_extraidos.get(clave_campo, "")
+        if texto_a_dibujar:
+            if reglas.get("align") == "C":
+                can.drawCentredString(reglas["x"], reglas["y"], str(texto_a_dibujar))
+            else:
+                can.drawString(reglas["x"], reglas["y"], str(texto_a_dibujar))
+
+    # Párrafo largo
+    cfg_parrafo = mapa_coordenadas.get("parrafo")
+    if cfg_parrafo and datos_extraidos.get("texto_largo"):
+        textobject = can.beginText(cfg_parrafo["x"], cfg_parrafo["y"])
+        textobject.setFont("Helvetica", 11)
+        lineas = textwrap.wrap(datos_extraidos["texto_largo"], width=cfg_parrafo.get("width", 90))
+        for linea in lineas:
+            textobject.textLine(linea)
+        can.drawText(textobject)
+
+    can.save()
+    packet.seek(0)
+    nuevo_pdf_datos = PdfReader(packet)
+
+    # 4. CARGAR LA PLANTILLA FÍSICA DESDE LA RUTA GUARDADA EN LA BD
+    ruta_plantilla = os.path.join(BASE_DIR, "templates_pdf", config_plantilla.nombre_archivo)
+    if not os.path.exists(ruta_plantilla):
+        raise HTTPException(status_code=500, detail=f"Falta el archivo físico: {config_plantilla.nombre_archivo}")
+        
+    plantilla_pdf = PdfReader(open(ruta_plantilla, "rb"))
+    output = PdfWriter()
+
+    pagina_base = plantilla_pdf.pages[0]
+    pagina_base.merge_page(nuevo_pdf_datos.pages[0])
+    output.add_page(pagina_base)
+
+    # 5. GUARDAR Y ENTREGAR EL PDF
+    pdf_filename = f"{doc.numero_documento}.pdf"
+    pdf_path = os.path.join(UPLOAD_DIR, pdf_filename)
+    
+    with open(pdf_path, "wb") as f:
+        output.write(f)
+
+    return FileResponse(path=pdf_path, filename=pdf_filename, media_type='application/pdf')

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        @page {
+            size: letter portrait;
+            margin: 2.5cm;
+            /* Configuración del pie de página fijo */
+            @frame footer {
+                -pdf-frame-content: footer_content;
+                bottom: 1cm;
+                margin-left: 2.5cm;
+                margin-right: 2.5cm;
+                height: 2cm;
+            }
+        }
+        body { 
+            font-family: Helvetica, Arial, sans-serif; 
+            font-size: 12pt; 
+            color: #000;
+        }
+        .header { text-align: center; margin-bottom: 40px; }
+        /* La ruta de la imagen será inyectada por Python */
+        .header img { max-width: 100%; height: auto; }
+        
+        .titulo { 
+            text-align: center; 
+            font-size: 16pt; 
+            font-weight: bold; 
+            margin-bottom: 30px; 
+            letter-spacing: 2px;
+        }
+        .datos-tabla { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
+        .datos-tabla td { padding: 6px 0; vertical-align: top; }
+        .label { font-weight: bold; width: 100px; }
+        
+        .contenido { 
+            text-align: justify; 
+            line-height: 1.5; 
+            margin-top: 20px; 
+        }
+        
+        .firma-caja { text-align: center; margin-top: 80px; }
+        .firma-linea { width: 250px; border-bottom: 1px solid #000; margin: 0 auto 10px auto; }
+        
+        .footer { 
+            text-align: center; 
+            font-size: 8pt; 
+            color: #555; 
+            border-top: 1px solid #ccc;
+            padding-top: 5px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+    <img src="{{ ruta_cintillo }}" style="width: 100%;" alt="Logo FIIIDT">
+    /div>
+
+    <div class="titulo">MEMORÁNDUM</div>
+
+    <table class="datos-tabla">
+        <tr>
+            <td class="label">PARA:</td>
+            <td><strong>{{ receptor_nombre }}</strong><br><span style="font-size: 11pt;">{{ receptor_cargo }}</span></td>
+        </tr>
+        <tr>
+            <td class="label">DE:</td>
+            <td><strong>{{ emisor_nombre }}</strong><br><span style="font-size: 11pt;">{{ emisor_cargo }}</span></td>
+        </tr>
+        <tr>
+            <td class="label">FECHA:</td>
+            <td>{{ fecha_formateada }}</td>
+        </tr>
+        <tr>
+            <td class="label">ASUNTO:</td>
+            <td><strong>{{ asunto }}</strong></td>
+        </tr>
+    </table>
+
+    <div class="contenido">
+        {{ descripcion }}
+    </div>
+
+    <div class="firma-caja">
+        <div class="firma-linea"></div>
+        <strong>{{ emisor_nombre }}</strong><br>
+        <span style="font-size: 11pt;">{{ emisor_cargo }}</span>
+    </div>
+
+    <div id="footer_content" class="footer">
+        Fundación Instituto de Ingeniería, Carretera Nacional Baruta - Hoyo de la Puerta, Altos de Sartenejas,<br>
+        Urb. Monte Elena II, entrada IDEA, Baruta - Edo. Bolivariano de Miranda. Apartado Postal 40200. Código Postal 1080.
+    </div>
+
+</body>
+</html>
