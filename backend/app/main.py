@@ -3,7 +3,8 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Form
 from typing import List, Optional
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.responses import FileResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func
 from datetime import datetime, timedelta
 import os
 import shutil
@@ -163,23 +164,73 @@ def obtener_perfil_actual(db: Session = Depends(get_db), usuario_actual: dict = 
         "centro": nombre_centro
     }
 
+# ==========================================
+# RUTAS DE EMPLEADOS (Para llenar los selectores reales)
+# ==========================================
+@app.get("/api/empleados")
+def obtener_lista_empleados(db: Session = Depends(get_db)):
+    """Devuelve la lista real de empleados para usar en los combobox del Frontend"""
+    empleados = db.query(models.Empleado).all()
+    return [{"id": emp.id, "nombre": emp.nombres_apellidos} for emp in empleados]
+
+
+# ==========================================
+# RUTAS PARA MEMORÁNDUMS (Con Concurrencia y Correlativos)
+# ==========================================
 @app.post("/api/memorandums", response_model=schemas.MemorandumRespuesta)
-def crear_memorandum(memo: schemas.MemorandumCrear, db: Session = Depends(get_db), usuario_actual: dict = Depends(get_usuario_actual)):
+def crear_memorandum_real(memo: schemas.MemorandumCrear, db: Session = Depends(get_db)):
+    """
+    Crea el memorándum generando automáticamente su correlativo (Ej: CTM-2026-001)
+    Maneja concurrencia bloqueando la lectura para evitar duplicados.
+    """
+    año_actual = datetime.utcnow().year
+
+    # 1. Buscar al empleado emisor real para saber a qué centro pertenece
+    emisor = db.query(models.Empleado).options(joinedload(models.Empleado.centros)).filter(models.Empleado.id == memo.emisor_id).first()
+    
+    if not emisor:
+        raise HTTPException(status_code=404, detail="El empleado emisor no existe en la base de datos.")
+
+    # Obtenemos la abreviatura del centro (Ej: 'CTM'). Si no tiene, usamos 'FIIIDT'
+    abreviatura_centro = emisor.centros[0].abreviatura if emisor.centros else "FIIIDT"
+
+    # 2. LÓGICA DE CORRELATIVOS CON MANEJO DE COLAS (CONCURRENCIA)
+    prefijo = f"{abreviatura_centro}-{año_actual}-"
+    
+    # with_for_update() bloquea la tabla momentáneamente.
+    ultimo_memo = db.query(models.Memorandum).filter(
+        models.Memorandum.numero_documento.like(f"{prefijo}%")
+    ).order_by(models.Memorandum.id.desc()).with_for_update().first()
+
+    if ultimo_memo and ultimo_memo.numero_documento:
+        try:
+            correlativo_actual = int(ultimo_memo.numero_documento.split('-')[-1])
+            nuevo_correlativo = correlativo_actual + 1
+        except ValueError:
+            nuevo_correlativo = 1
+    else:
+        nuevo_correlativo = 1
+
+    # Formateamos el número para que siempre tenga 3 ceros (Ej: 001, 015, 142)
+    numero_generado = f"{prefijo}{nuevo_correlativo:03d}"
+
+    # 3. Guardar en Base de Datos con su correlativo asignado y status de borrador
     nuevo_memo = models.Memorandum(
+        numero_documento=numero_generado,
         asunto=memo.asunto,
         descripcion=memo.descripcion,
+        fecha=memo.fecha,
         emisor_id=memo.emisor_id,
         receptor_id=memo.receptor_id,
-        autoridad_id=memo.autoridad_id,
-        centro=memo.centro,
-        fecha=datetime.now(),
-        status="CREADO"
+        anexos=memo.anexos,
+        centro=emisor.centros[0].nombre if emisor.centros else "Sede Principal",
+        status="CREADO" 
     )
+    
     db.add(nuevo_memo)
     db.commit()
     db.refresh(nuevo_memo)
-    nuevo_memo.numero_documento = f"MEMO-2026-{nuevo_memo.id}"
-    db.commit()
+    
     return nuevo_memo
 
 @app.post("/api/puntos-cuenta", response_model=schemas.PuntoCuentaRespuesta)

@@ -192,3 +192,30 @@ class PlantillaPDFRespuesta(BaseModel):
 
     class Config:
         from_attributes = True
+
+        # ==========================================
+# ESQUEMAS PARA MEMORÁNDUM
+# ==========================================
+
+class MemorandumCrear(BaseModel):
+    asunto: str
+    descripcion: str
+    fecha: datetime
+    receptor_id: str
+    emisor_id: str
+    anexos: Optional[bool] = False
+    centro: Optional[str] = "Sede Principal" 
+
+class MemorandumRespuesta(BaseModel):
+    id: int
+    numero_documento: Optional[str] = None
+    asunto: str
+    descripcion: str
+    fecha: datetime
+    emisor_id: str
+    receptor_id: str
+    status: str
+    anexos: bool
+
+    class Config:
+        from_attributes = True
