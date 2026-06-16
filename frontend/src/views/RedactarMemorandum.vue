@@ -1,169 +1,175 @@
+<script setup lang="ts">
+import { ref, onMounted } from 'vue';
+import { useRouter } from 'vue-router';
+
+const router = useRouter();
+
+// Estados del formulario
+const receptorId = ref('');
+const emisorId = ref<number | null>(null); 
+const asunto = ref('');
+const fecha = ref(new Date().toISOString().split('T')[0]); 
+const descripcion = ref('');
+const adjuntarArchivos = ref(false);
+
+const isSubmitting = ref(false);
+
+// Lista de empleados desde la BD
+const listaEmpleados = ref<Array<{id: number, nombre: string, cedula: string}>>([]);
+
+// Consultamos al backend al cargar la página
+onMounted(async () => {
+  try {
+    const token = localStorage.getItem('nexus_token') || localStorage.getItem('token');
+    
+    // 1. Buscar la lista de receptores
+    const responseEmpleados = await fetch('http://127.0.0.1:8000/api/empleados', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (responseEmpleados.ok) {
+      listaEmpleados.value = await responseEmpleados.json();
+    }
+
+    // 2. Buscar quién es el usuario actual (Emisor)
+    const responseMe = await fetch('http://127.0.0.1:8000/api/me', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (responseMe.ok) {
+      const meData = await responseMe.json();
+      emisorId.value = meData.empleado_id;
+    }
+  } catch (error) {
+    console.error("Error cargando datos iniciales:", error);
+  }
+});
+
+const procesarFormulario = async () => {
+    if (!emisorId.value) {
+      alert("Error: No se pudo identificar tu perfil de usuario. Recarga la página.");
+      return;
+    }
+
+    isSubmitting.value = true;
+    const token = localStorage.getItem('nexus_token') || localStorage.getItem('token');
+
+    try {
+      // AJUSTE MAESTRO: Forzamos a que todo sea texto (String) para complacer a Pydantic
+      const payload = {
+        emisor_id: String(emisorId.value),
+        receptor_id: String(receptorId.value),
+        asunto: asunto.value,
+        fecha: fecha.value,
+        descripcion: descripcion.value,
+        anexos: adjuntarArchivos.value ? "Sí" : "No"
+      };
+
+      const memoResponse = await fetch('http://127.0.0.1:8000/api/memorandums', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!memoResponse.ok) {
+        const errorData = await memoResponse.json();
+        console.error("Detalle del Error 422:", errorData);
+        alert("FastAPI rechazó los datos (422). Detalle: " + JSON.stringify(errorData.detail));
+        throw new Error("Error 422 de Validación Pydantic");
+      }
+      
+      const memoGenerado = await memoResponse.json();
+      const correlativo = memoGenerado.numero_documento;
+      
+      alert(`¡Memorándum ${correlativo} guardado exitosamente con estatus CREADO!`);
+      router.push('/dashboard/emitidos');
+
+    } catch (error: any) {
+      console.error(error);
+      if (error.message !== "Error 422 de Validación Pydantic") {
+        alert("Ocurrió un error de conexión con el servidor.");
+      }
+    } finally {
+      isSubmitting.value = false;
+    }
+};
+</script>
+
 <template>
-  <div class="max-w-4xl mx-auto p-6 bg-white rounded-lg shadow-md mt-10">
-    <div class="flex items-center justify-between mb-6 border-b pb-4">
-      <h2 class="text-2xl font-bold text-gray-800">
-        Redactar Memorándum Oficial
-      </h2>
-      <span
-        class="px-3 py-1 bg-blue-100 text-blue-800 text-xs font-semibold rounded-full"
-      >
-        NUEVO
-      </span>
-    </div>
+  <div class="max-w-3xl text-gray-200">
+    <h2 class="text-xl font-bold text-white mb-6">Nuevo Memorándum</h2>
 
-    <div v-if="cargandoEmpleados" class="text-center py-4 text-gray-500">
-      Cargando lista de personal...
-    </div>
-
-    <form v-else @submit.prevent="generarDocumento" class="space-y-6">
+    <form @submit.prevent="procesarFormulario" class="space-y-6">
+      
       <div>
-        <label class="block text-sm font-medium text-gray-700">Asunto</label>
-        <input
-          v-model="form.asunto"
-          type="text"
+        <label class="block text-sm font-semibold text-white mb-2">Seleccionar Receptor</label>
+        <select 
+          v-model="receptorId"
+          class="w-full bg-[#141414] border border-red-600 text-white text-sm rounded-md focus:ring-red-500 focus:border-red-500 block p-3 appearance-none"
           required
-          class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border bg-gray-50"
-          placeholder="Ej: Solicitud de revisión de equipos..."
-        />
-      </div>
-
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div>
-          <label class="block text-sm font-medium text-gray-700"
-            >De (Remitente)</label
-          >
-          <select
-            v-model="form.emisor_id"
-            required
-            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border bg-gray-50"
-          >
-            <option value="" disabled>Seleccione un remitente...</option>
-            <option v-for="emp in listaEmpleados" :key="emp.id" :value="emp.id">
-              {{ emp.nombre }}
-            </option>
-          </select>
-        </div>
-
-        <div>
-          <label class="block text-sm font-medium text-gray-700"
-            >Para (Destinatario)</label
-          >
-          <select
-            v-model="form.receptor_id"
-            required
-            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border bg-gray-50"
-          >
-            <option value="" disabled>Seleccione un destinatario...</option>
-            <option v-for="emp in listaEmpleados" :key="emp.id" :value="emp.id">
-              {{ emp.nombre }}
-            </option>
-          </select>
-        </div>
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-gray-700"
-          >Cuerpo del Memorándum</label
         >
-        <textarea
-          v-model="form.descripcion"
-          rows="8"
+          <option value="" disabled selected>Selecciona un usuario</option>
+          <option 
+            v-for="emp in listaEmpleados" 
+            :key="emp.id" 
+            :value="emp.id"
+          >
+            {{ emp.nombre }} - {{ emp.cedula }}
+          </option>
+        </select>
+      </div>
+
+      <div>
+        <input 
+          type="text" 
+          v-model="asunto"
+          placeholder="Asunto"
+          class="w-full bg-[#0a0a0a] border border-gray-800 text-white text-sm rounded-md focus:ring-red-500 focus:border-red-500 block p-3"
           required
-          class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border bg-gray-50"
-          placeholder="Redacte el contenido oficial aquí..."
+        >
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-500 mb-2">Fecha del Documento</label>
+        <input 
+          type="date" 
+          v-model="fecha"
+          class="w-full bg-white text-black text-sm rounded-md focus:ring-red-500 focus:border-red-500 block p-3"
+          required
+        >
+      </div>
+
+      <div>
+        <textarea 
+          v-model="descripcion"
+          placeholder="Descripción del memorándum..."
+          rows="6"
+          class="w-full bg-[#2a2a2a] border border-gray-600 text-gray-300 text-sm rounded-md focus:ring-red-500 focus:border-red-500 block p-3 resize-none"
+          required
         ></textarea>
       </div>
 
       <div class="flex items-center">
-        <input
-          v-model="form.anexos"
-          type="checkbox"
-          class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-        />
-        <label class="ml-2 block text-sm text-gray-900 font-medium">
-          Este documento incluye anexos físicos/digitales
-        </label>
+        <input 
+          type="checkbox" 
+          v-model="adjuntarArchivos"
+          id="adjuntos"
+          class="w-4 h-4 text-red-600 bg-[#141414] border-gray-600 rounded focus:ring-red-500 focus:ring-2"
+        >
+        <label for="adjuntos" class="ml-2 text-sm font-medium text-white">¿Desea adjuntar archivos?</label>
       </div>
 
-      <div class="flex justify-end space-x-3 pt-6 border-t mt-6">
-        <button
-          type="button"
-          class="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 shadow-sm"
+      <div class="pt-2">
+        <button 
+          type="submit" 
+          :disabled="isSubmitting"
+          class="bg-[#e52323] hover:bg-red-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-2.5 px-6 rounded-md transition-colors"
         >
-          Cancelar
-        </button>
-        <button
-          type="submit"
-          :disabled="guardando"
-          class="px-6 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-800 hover:bg-blue-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-800 disabled:bg-gray-400"
-        >
-          {{ guardando ? "Procesando..." : "Generar Documento" }}
+          {{ isSubmitting ? 'Procesando...' : 'Crear Memorándum' }}
         </button>
       </div>
+
     </form>
   </div>
 </template>
-
-<script setup>
-import { ref, onMounted } from "vue";
-
-const form = ref({
-  asunto: "",
-  descripcion: "",
-  fecha: new Date().toISOString(),
-  emisor_id: "",
-  receptor_id: "",
-  anexos: false,
-  centro: "Sede Principal",
-});
-
-const listaEmpleados = ref([]);
-const cargandoEmpleados = ref(true);
-const guardando = ref(false);
-
-onMounted(async () => {
-  try {
-    const response = await fetch("http://127.0.0.1:8000/api/empleados");
-    if (response.ok) {
-      listaEmpleados.value = await response.json();
-    }
-  } catch (error) {
-    console.error("Error cargando empleados:", error);
-  } finally {
-    cargandoEmpleados.value = false;
-  }
-});
-
-const generarDocumento = async () => {
-  guardando.value = true;
-  try {
-    const response = await fetch("http://127.0.0.1:8000/api/memorandums", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form.value),
-    });
-
-    if (response.ok) {
-      const data = await response.json();
-      alert(
-        `¡Documento Generado Exitosamente!\nCorrelativo Oficial: ${data.numero_documento}\nEstatus: ${data.status}`,
-      );
-
-      // Limpiamos el formulario
-      form.value.asunto = "";
-      form.value.descripcion = "";
-      form.value.emisor_id = "";
-      form.value.receptor_id = "";
-      form.value.anexos = false;
-    } else {
-      const errorData = await response.json();
-      alert("Error en el servidor: " + JSON.stringify(errorData));
-    }
-  } catch (error) {
-    console.error("Error de red:", error);
-    alert("No se pudo conectar con el servidor.");
-  } finally {
-    guardando.value = false;
-  }
-};
-</script>

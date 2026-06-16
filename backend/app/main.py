@@ -6,6 +6,8 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from datetime import datetime, timedelta
+from fastapi.responses import Response
+import io
 import os
 import shutil
 import jwt 
@@ -207,9 +209,16 @@ def procesar_recuperacion_clave(datos: schemas.PeticionRecuperacion, db: Session
 # ==========================================
 @app.get("/api/empleados")
 def obtener_lista_empleados(db: Session = Depends(get_db)):
-    """Devuelve la lista real de empleados para usar en los combobox del Frontend"""
+    """Devuelve la lista real de empleados con cédula para el Frontend"""
     empleados = db.query(models.Empleado).all()
-    return [{"id": emp.id, "nombre": emp.nombres_apellidos} for emp in empleados]
+    return [
+        {
+            "id": emp.id, 
+            "nombre": emp.nombres_apellidos, 
+            "cedula": emp.cedula # Agregamos la cédula aquí
+        } 
+        for emp in empleados
+    ]
 
 
 # ==========================================
@@ -260,6 +269,113 @@ def crear_memorandum_real(memo: schemas.MemorandumCrear, db: Session = Depends(g
     db.refresh(nuevo_memo)
     
     return nuevo_memo
+
+@app.get("/api/memorandums/emitidos")
+def obtener_memos_emitidos(db: Session = Depends(get_db), usuario_actual: dict = Depends(get_usuario_actual)):
+    """Busca todos los memorándums emitidos por el usuario que inició sesión"""
+    usuario = db.query(models.Usuario).filter(models.Usuario.correo == usuario_actual["sub"]).first()
+    empleado = db.query(models.Empleado).filter(models.Empleado.usuario_id == usuario.id).first()
+    
+    if not empleado:
+        raise HTTPException(status_code=404, detail="Perfil de empleado no encontrado.")
+
+    # Buscamos los memos donde el emisor sea el usuario actual, ordenados del más nuevo al más viejo
+    memos = db.query(models.Memorandum).filter(models.Memorandum.emisor_id == empleado.id).order_by(models.Memorandum.id.desc()).all()
+    
+    resultados = []
+    for m in memos:
+        resultados.append({
+            "id": m.id,
+            "correlativo": m.numero_documento,
+            "presentador": empleado.nombres_apellidos,
+            "cargo_presentador": empleado.cargos[0].nombre if empleado.cargos else "Sin cargo",
+            "asunto": m.asunto,
+            "decision": m.status,
+            "fecha": m.fecha.strftime("%d/%m/%Y"),
+            "anexos": m.anexos
+        })
+    return resultados
+
+@app.get("/api/memorandums/{memo_id}/pdf")
+def generar_pdf_memorandum(memo_id: int, db: Session = Depends(get_db)):
+    """Genera el PDF fusionando la data con la plantilla PDF oficial"""
+    
+    # 1. Buscar el documento y sus actores
+    memo = db.query(models.Memorandum).filter(models.Memorandum.id == memo_id).first()
+    if not memo:
+        raise HTTPException(status_code=404, detail="Memorándum no encontrado.")
+        
+    emisor = db.query(models.Empleado).filter(models.Empleado.id == memo.emisor_id).first()
+    receptor = db.query(models.Empleado).filter(models.Empleado.id == memo.receptor_id).first()
+
+    # 2. Crear la capa transparente SOLO con el texto dinámico (ReportLab)
+    capa_texto = io.BytesIO()
+    c = canvas.Canvas(capa_texto, pagesize=letter)
+    
+    c.setFont("Helvetica-Bold", 11)
+    # Correlativo (Esquina superior derecha)
+    c.drawString(450, 680, str(memo.numero_documento))
+    
+    # Bloque de Cabeceras
+    c.drawString(120, 640, f"{receptor.nombres_apellidos}") # PARA
+    c.setFont("Helvetica", 10)
+    c.drawString(120, 625, f"{receptor.cargos[0].nombre if receptor.cargos else 'Sin cargo'}") 
+    
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(120, 595, f"{emisor.nombres_apellidos}") # DE
+    c.setFont("Helvetica", 10)
+    c.drawString(120, 580, f"{emisor.cargos[0].nombre if emisor.cargos else 'Sin cargo'}")
+    
+    c.setFont("Helvetica", 11)
+    c.drawString(120, 550, f"{memo.fecha.strftime('%d de %B de %Y')}") # FECHA
+    c.drawString(120, 520, f"{memo.asunto}") # ASUNTO
+    
+    # Descripción con saltos de línea
+    c.setFont("Helvetica", 11)
+    textobject = c.beginText(50, 470)
+    lineas_descripcion = memo.descripcion.split('\n')
+    for linea in lineas_descripcion:
+        textobject.textLine(linea)
+    c.drawText(textobject)
+    
+    # Firma simulada
+    c.setFont("Helvetica-Bold", 10)
+    c.drawCentredString(letter[0]/2, 100, f"{emisor.nombres_apellidos}")
+    c.setFont("Helvetica", 9)
+    c.drawCentredString(letter[0]/2, 85, "Fundacion Instituto de Ingenieria")
+    c.drawCentredString(letter[0]/2, 70, f"{memo.fecha.strftime('%Y-%m-%d')} 15:59:19")
+    
+    c.save()
+    capa_texto.seek(0)
+
+    # 3. Buscar la plantilla PDF original en tu sistema
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    ruta_plantilla = os.path.join(base_dir, "templates_pdf", "plantilla_memorandum.pdf")
+    
+    try:
+        # 4. Fusionar la plantilla con la capa de texto
+        plantilla_pdf = PdfReader(open(ruta_plantilla, "rb"))
+        texto_pdf = PdfReader(capa_texto)
+        
+        # Tomamos la primera página de la plantilla y le estampamos el texto
+        pagina_resultado = plantilla_pdf.pages[0]
+        pagina_resultado.merge_page(texto_pdf.pages[0])
+        
+        # Guardar el resultado final
+        salida = PdfWriter()
+        salida.add_page(pagina_resultado)
+        
+        buffer_salida = io.BytesIO()
+        salida.write(buffer_salida)
+        buffer_salida.seek(0)
+        
+        # 5. Devolver al navegador
+        return Response(content=buffer_salida.getvalue(), media_type="application/pdf")
+        
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail=f"No se encontró la plantilla en: {ruta_plantilla}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fusionando PDF: {str(e)}")
 
 @app.post("/api/puntos-cuenta", response_model=schemas.PuntoCuentaRespuesta)
 def crear_punto_cuenta(punto: schemas.PuntoCuentaCrear, db: Session = Depends(get_db), usuario_actual: dict = Depends(get_usuario_actual)):

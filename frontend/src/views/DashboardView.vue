@@ -105,7 +105,8 @@ const logout = () => {
               v-if="memoDesplegable" 
               class="mt-1 py-1 pl-12 text-sm space-y-3"
             >
-              <router-link to="/dashboard/redactar-memo" class="block font-bold transition-colors" :class="isDarkMode ? 'text-white hover:text-gray-300' : 'text-gray-900 hover:text-red-600'">
+              <!-- AQUI ESTA EL CAMBIO HACIA LA BANDEJA -->
+              <router-link to="/dashboard/emitidos" class="block font-bold transition-colors" :class="isDarkMode ? 'text-white hover:text-gray-300' : 'text-gray-900 hover:text-red-600'">
                 <span class="mr-1 text-gray-500">•</span> Emitidos
               </router-link>
               <a href="#" class="block font-bold transition-colors" :class="isDarkMode ? 'text-white hover:text-gray-300' : 'text-gray-900 hover:text-red-600'">
