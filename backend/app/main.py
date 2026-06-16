@@ -81,7 +81,7 @@ def read_root():
     return {"mensaje": "¡El backend de Nexus está corriendo al 100%!"}
 
 # ==========================================
-# MÓDULO DE USUARIOS, DOCUMENTOS Y BANDEJA
+# MÓDULO DE USUARIOS, RECUPERACIÓN Y PERFIL
 # ==========================================
 
 @app.post("/api/usuarios", response_model=schemas.UsuarioRespuesta)
@@ -164,8 +164,46 @@ def obtener_perfil_actual(db: Session = Depends(get_db), usuario_actual: dict = 
         "centro": nombre_centro
     }
 
+@app.get("/api/usuarios/preguntas")
+def obtener_preguntas_seguridad(correo: str, db: Session = Depends(get_db)):
+    """Busca al usuario por correo y devuelve sus preguntas de seguridad institucionales."""
+    usuario = db.query(models.Usuario).filter(models.Usuario.correo == correo).first()
+    
+    if not usuario:
+        raise HTTPException(status_code=404, detail="El correo electrónico no se encuentra registrado en el sistema.")
+        
+    return {
+        "pregunta_seguridad_1": usuario.pregunta_seguridad_1,
+        "pregunta_seguridad_2": usuario.pregunta_seguridad_2
+    }
+
+@app.post("/api/usuarios/recuperar-clave")
+def procesar_recuperacion_clave(datos: schemas.PeticionRecuperacion, db: Session = Depends(get_db)):
+    """Valida las respuestas de seguridad y actualiza las credenciales del usuario."""
+    usuario = db.query(models.Usuario).filter(models.Usuario.correo == datos.correo).first()
+    
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado.")
+
+    # Validación estricta de respuestas (insensible a mayúsculas/espacios para evitar bloqueos innecesarios)
+    resp1_db = usuario.respuesta_seguridad_1.strip().lower()
+    resp1_user = datos.respuesta_seguridad_1.strip().lower()
+    
+    resp2_db = usuario.respuesta_seguridad_2.strip().lower()
+    resp2_user = datos.respuesta_seguridad_2.strip().lower()
+
+    if resp1_db != resp1_user or resp2_db != resp2_user:
+        raise HTTPException(status_code=400, detail="Las respuestas de seguridad ingresadas no coinciden con nuestros registros.")
+
+    # Actualización de credenciales y periodo de validez
+    usuario.password = encriptar_password(datos.nueva_password)
+    usuario.fecha_expiracion_clave = datetime.utcnow() + timedelta(days=datos.validez_dias)
+    
+    db.commit()
+    return {"mensaje": "Credenciales actualizadas exitosamente."}
+
 # ==========================================
-# RUTAS DE EMPLEADOS (Para llenar los selectores reales)
+# RUTAS DE EMPLEADOS
 # ==========================================
 @app.get("/api/empleados")
 def obtener_lista_empleados(db: Session = Depends(get_db)):
@@ -175,29 +213,21 @@ def obtener_lista_empleados(db: Session = Depends(get_db)):
 
 
 # ==========================================
-# RUTAS PARA MEMORÁNDUMS (Con Concurrencia y Correlativos)
+# RUTAS PARA DOCUMENTOS (Concurrencia y Correlativos)
 # ==========================================
 @app.post("/api/memorandums", response_model=schemas.MemorandumRespuesta)
 def crear_memorandum_real(memo: schemas.MemorandumCrear, db: Session = Depends(get_db)):
-    """
-    Crea el memorándum generando automáticamente su correlativo (Ej: CTM-2026-001)
-    Maneja concurrencia bloqueando la lectura para evitar duplicados.
-    """
     año_actual = datetime.utcnow().year
 
-    # 1. Buscar al empleado emisor real para saber a qué centro pertenece
     emisor = db.query(models.Empleado).options(joinedload(models.Empleado.centros)).filter(models.Empleado.id == memo.emisor_id).first()
     
     if not emisor:
         raise HTTPException(status_code=404, detail="El empleado emisor no existe en la base de datos.")
 
-    # Obtenemos la abreviatura del centro (Ej: 'CTM'). Si no tiene, usamos 'FIIIDT'
     abreviatura_centro = emisor.centros[0].abreviatura if emisor.centros else "FIIIDT"
 
-    # 2. LÓGICA DE CORRELATIVOS CON MANEJO DE COLAS (CONCURRENCIA)
     prefijo = f"{abreviatura_centro}-{año_actual}-"
     
-    # with_for_update() bloquea la tabla momentáneamente.
     ultimo_memo = db.query(models.Memorandum).filter(
         models.Memorandum.numero_documento.like(f"{prefijo}%")
     ).order_by(models.Memorandum.id.desc()).with_for_update().first()
@@ -211,10 +241,8 @@ def crear_memorandum_real(memo: schemas.MemorandumCrear, db: Session = Depends(g
     else:
         nuevo_correlativo = 1
 
-    # Formateamos el número para que siempre tenga 3 ceros (Ej: 001, 015, 142)
     numero_generado = f"{prefijo}{nuevo_correlativo:03d}"
 
-    # 3. Guardar en Base de Datos con su correlativo asignado y status de borrador
     nuevo_memo = models.Memorandum(
         numero_documento=numero_generado,
         asunto=memo.asunto,

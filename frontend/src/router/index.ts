@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import LoginView from '../views/LoginView.vue'
 import RegisterView from '../views/RegisterView.vue'
 import RedactarMemorandum from '../views/RedactarMemorandum.vue' // <-- 1. Importamos la nueva vista
+import RecuperarPasswordView from '../views/RecuperarPasswordView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -15,6 +16,11 @@ const router = createRouter({
       path: '/registro',
       name: 'registro',
       component: RegisterView
+    },
+    {
+      path: '/recuperar-password', // <-- Ruta oficial
+      name: 'recuperar-password',
+      component: RecuperarPasswordView
     },
     {
       path: '/dashboard',

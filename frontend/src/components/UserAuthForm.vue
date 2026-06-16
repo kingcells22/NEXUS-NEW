@@ -105,14 +105,23 @@ const onSubmit = async () => {
         Ingresar
       </button>
 
-      <div class="mt-4 text-center text-sm">
-        ¿No tienes cuenta administrativa?
+      <div class="mt-4 flex flex-col space-y-3 text-center text-sm">
         <RouterLink
-          to="/registro"
-          class="text-primary font-medium hover:underline"
+          to="/recuperar-password"
+          class="text-muted-foreground hover:text-primary transition-colors hover:underline"
         >
-          Regístrate aquí
+          ¿Olvidaste tu contraseña?
         </RouterLink>
+
+        <div class="text-muted-foreground">
+          ¿No tienes cuenta administrativa?
+          <RouterLink
+            to="/registro"
+            class="text-primary font-medium hover:underline ml-1"
+          >
+            Regístrate aquí
+          </RouterLink>
+        </div>
       </div>
     </form>
 

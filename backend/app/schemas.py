@@ -219,3 +219,10 @@ class MemorandumRespuesta(BaseModel):
 
     class Config:
         from_attributes = True
+
+class PeticionRecuperacion(BaseModel):
+    correo: str
+    respuesta_seguridad_1: str
+    respuesta_seguridad_2: str
+    nueva_password: str
+    validez_dias: int
