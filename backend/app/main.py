@@ -18,7 +18,12 @@ import base64
 import io
 import textwrap
 from pypdf import PdfReader, PdfWriter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_JUSTIFY, TA_CENTER, TA_RIGHT
 from reportlab.pdfgen import canvas
+from reportlab.lib.utils import simpleSplit
+from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 
 from app.database import engine, Base, get_db
@@ -39,7 +44,7 @@ app.add_middleware(
 )
 
 # --- CONFIGURACIÓN DE SEGURIDAD JWT ---
-SECRET_KEY = "NEXUS_FIIIDT_SUPER_SECRETO_2026" 
+SECRET_KEY = "NEXUS_FIIIDT_SUPER_SECRETO_2026!" 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 
 
@@ -71,6 +76,40 @@ def get_usuario_actual(token: str = Depends(oauth2_scheme)):
     except jwt.PyJWTError: 
         raise HTTPException(status_code=401, detail="No tienes permiso para entrar aquí, acceso denegado.")
 
+# ==========================================
+# MOTOR DE ROLES (RBAC) - INYECTADO AQUÍ
+# ==========================================
+def asignar_rol_automatico(correo: str, cargos: list, centros: list) -> str:
+    """Evalúa los parámetros del empleado y retorna su Rol en NEXUS"""
+    correo_lower = correo.strip().lower()
+    cargos_upper = [c.strip().upper() for c in cargos]
+    centros_upper = [c.strip().upper() for c in centros]
+    
+    # 1. El Dios del Sistema
+    if correo_lower == "admin@nexus.gob.ve":
+        return "ADMIN GLOBAL"
+        
+    # 2. El Presidente
+    if "PRESIDENTE" in cargos_upper:
+        return "ADMIN GRAL"
+        
+    # 3. Gestión Humana (Maneja usuarios)
+    if "OFICINA DE GESTIÓN HUMANA" in centros_upper or "OGH" in centros_upper:
+        return "ADMIN USERS"
+        
+    # 4. Jefes, Coordinadores y Directores
+    cargos_jefatura = [
+        "JEFE DE CENTRO", "DIRECTOR TÉCNICO", "COORDINADOR", 
+        "GERENTE", "CONSULTORA JURÍDICA", "AUDITORA INTERNA"
+    ]
+    if any(cargo in cargos_jefatura for cargo in cargos_upper):
+        return "USER JEFE"
+        
+    # 5. Resto del personal
+    return "USER NORMAL"
+# ==========================================
+
+
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -88,13 +127,30 @@ def read_root():
 
 @app.post("/api/usuarios", response_model=schemas.UsuarioRespuesta)
 def crear_usuario_completo(datos: schemas.RegistroCompletoCrear, db: Session = Depends(get_db)):
+    
+    # 1. Verificar si el correo ya lo está usando alguien más
     if db.query(models.Usuario).filter(models.Usuario.correo == datos.correo).first():
-        raise HTTPException(status_code=400, detail="Este correo ya está registrado.")
-    if db.query(models.Empleado).filter(models.Empleado.cedula == datos.cedula).first():
-        raise HTTPException(status_code=400, detail="Esta cédula ya está registrada.")
+        raise HTTPException(status_code=400, detail="Este correo ya está registrado en otra cuenta.")
+        
+    # 2. Buscar al empleado pre-existente (inyectado por el seed)
+    empleado_existente = db.query(models.Empleado).filter(models.Empleado.cedula == datos.cedula).first()
+    if not empleado_existente:
+        raise HTTPException(status_code=404, detail="No se encontró un empleado con esta cédula. Consulte con Recursos Humanos.")
+        
+    # 3. Verificar si este empleado ya reclamó su cuenta web
+    if empleado_existente.usuario_id is not None:
+        raise HTTPException(status_code=400, detail="Este empleado ya tiene una cuenta de usuario asignada en NEXUS.")
 
     fecha_expiracion = datetime.utcnow() + timedelta(days=datos.validez_dias)
 
+    # --- ASIGNACIÓN DE ROL AUTOMÁTICO ---
+    rol_calculado = asignar_rol_automatico(
+        correo=datos.correo, 
+        cargos=[datos.cargo], 
+        centros=[datos.centro]
+    )
+
+    # 4. Crear las credenciales web (El objeto Usuario)
     nuevo_usuario = models.Usuario(
         correo=datos.correo,
         password=encriptar_password(datos.password), 
@@ -103,44 +159,29 @@ def crear_usuario_completo(datos: schemas.RegistroCompletoCrear, db: Session = D
         respuesta_seguridad_1=datos.respuesta_seguridad_1,
         pregunta_seguridad_2=datos.pregunta_seguridad_2,
         respuesta_seguridad_2=datos.respuesta_seguridad_2,
-        rol="USER"
+        rol=rol_calculado # <--- EL SISTEMA LE ASIGNA EL ROL EXACTO AQUÍ
     )
+    
     db.add(nuevo_usuario)
-    db.flush() 
+    db.flush() # Guardamos temporalmente para que PostgreSQL le genere su UUID
 
-    centro_limpio = datos.centro.strip().upper()
-    centro_db = db.query(models.Centro).filter(models.Centro.nombre == centro_limpio).first()
-    if not centro_db:
-        centro_db = models.Centro(nombre=centro_limpio, abreviatura=centro_limpio)
-        db.add(centro_db)
-        db.flush()
-
-    cargo_limpio = datos.cargo.strip().upper()
-    cargo_db = db.query(models.Cargo).filter(models.Cargo.nombre == cargo_limpio).first()
-    if not cargo_db:
-        cargo_db = models.Cargo(nombre=cargo_limpio)
-        db.add(cargo_db)
-        db.flush()
-
-    nuevo_empleado = models.Empleado(
-        usuario_id=nuevo_usuario.id,
-        cedula=datos.cedula,
-        nombres_apellidos=datos.nombres_apellidos,
-        fecha_ingreso=datetime.utcnow() 
-    )
-    nuevo_empleado.centros.append(centro_db)
-    nuevo_empleado.cargos.append(cargo_db)
-    db.add(nuevo_empleado)
+    # 5. ¡LA MAGIA RELACIONAL! Enlazamos el usuario web con el perfil de RRHH
+    empleado_existente.usuario_id = nuevo_usuario.id
     
     db.commit()
     db.refresh(nuevo_usuario)
+    
     return nuevo_usuario
 
 @app.post("/api/login")
 def iniciar_sesion(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     usuario = db.query(models.Usuario).filter(models.Usuario.correo == form_data.username).first()
+    # Verifica credenciales y también que el usuario no esté deshabilitado (is_active / estado)
     if not usuario or not verificar_password(form_data.password, usuario.password):
         raise HTTPException(status_code=401, detail="Correo o contraseña incorrectos.")
+        
+    if not getattr(usuario, 'estado', True): # Si el estado es False (Deshabilitado)
+        raise HTTPException(status_code=403, detail="Su usuario ha sido deshabilitado. Contacte a Gestión Humana.")
 
     token_jwt = crear_token_acceso(
         data={"sub": usuario.correo, "rol": usuario.rol}, 
@@ -209,16 +250,36 @@ def procesar_recuperacion_clave(datos: schemas.PeticionRecuperacion, db: Session
 # ==========================================
 @app.get("/api/empleados")
 def obtener_lista_empleados(db: Session = Depends(get_db)):
-    """Devuelve la lista real de empleados con cédula para el Frontend"""
-    empleados = db.query(models.Empleado).all()
+    """Devuelve la lista real de empleados ordenada alfabéticamente"""
+    # Ordenamos alfabéticamente de la A a la Z
+    empleados = db.query(models.Empleado).order_by(models.Empleado.nombres_apellidos.asc()).all()
     return [
         {
             "id": emp.id, 
             "nombre": emp.nombres_apellidos, 
-            "cedula": emp.cedula # Agregamos la cédula aquí
+            "cedula": emp.cedula
         } 
         for emp in empleados
     ]
+
+@app.get("/api/empleados/buscar/{cedula}")
+def buscar_empleado_por_cedula(cedula: str, db: Session = Depends(get_db)):
+    """Busca un empleado pre-cargado por el seed para que reclame su cuenta"""
+    empleado = db.query(models.Empleado).filter(models.Empleado.cedula == cedula).first()
+    
+    if not empleado:
+        raise HTTPException(status_code=404, detail="Cédula no encontrada en la base de datos del personal.")
+        
+    if empleado.usuario_id is not None:
+        raise HTTPException(status_code=400, detail="Este empleado ya tiene un usuario registrado en NEXUS.")
+
+    # Retornamos los datos para auto-llenar el formulario de Vue
+    return {
+        "cedula": empleado.cedula,
+        "nombres_apellidos": empleado.nombres_apellidos,
+        "cargo": empleado.cargos[0].nombre if empleado.cargos else "Sin cargo asignado",
+        "centro": empleado.centros[0].nombre if empleado.centros else "Sin centro asignado"
+    }
 
 
 # ==========================================
@@ -298,9 +359,9 @@ def obtener_memos_emitidos(db: Session = Depends(get_db), usuario_actual: dict =
 
 @app.get("/api/memorandums/{memo_id}/pdf")
 def generar_pdf_memorandum(memo_id: int, db: Session = Depends(get_db)):
-    """Genera el PDF fusionando la data con la plantilla PDF oficial"""
+    """Genera el PDF con salto de página automático, encabezados, pie de página y metadatos"""
     
-    # 1. Buscar el documento y sus actores
+    # 1. Buscar los datos en PostgreSQL
     memo = db.query(models.Memorandum).filter(models.Memorandum.id == memo_id).first()
     if not memo:
         raise HTTPException(status_code=404, detail="Memorándum no encontrado.")
@@ -308,74 +369,98 @@ def generar_pdf_memorandum(memo_id: int, db: Session = Depends(get_db)):
     emisor = db.query(models.Empleado).filter(models.Empleado.id == memo.emisor_id).first()
     receptor = db.query(models.Empleado).filter(models.Empleado.id == memo.receptor_id).first()
 
-    # 2. Crear la capa transparente SOLO con el texto dinámico (ReportLab)
-    capa_texto = io.BytesIO()
-    c = canvas.Canvas(capa_texto, pagesize=letter)
-    
-    c.setFont("Helvetica-Bold", 11)
-    # Correlativo (Esquina superior derecha)
-    c.drawString(450, 680, str(memo.numero_documento))
-    
-    # Bloque de Cabeceras
-    c.drawString(120, 640, f"{receptor.nombres_apellidos}") # PARA
-    c.setFont("Helvetica", 10)
-    c.drawString(120, 625, f"{receptor.cargos[0].nombre if receptor.cargos else 'Sin cargo'}") 
-    
-    c.setFont("Helvetica-Bold", 11)
-    c.drawString(120, 595, f"{emisor.nombres_apellidos}") # DE
-    c.setFont("Helvetica", 10)
-    c.drawString(120, 580, f"{emisor.cargos[0].nombre if emisor.cargos else 'Sin cargo'}")
-    
-    c.setFont("Helvetica", 11)
-    c.drawString(120, 550, f"{memo.fecha.strftime('%d de %B de %Y')}") # FECHA
-    c.drawString(120, 520, f"{memo.asunto}") # ASUNTO
-    
-    # Descripción con saltos de línea
-    c.setFont("Helvetica", 11)
-    textobject = c.beginText(50, 470)
-    lineas_descripcion = memo.descripcion.split('\n')
-    for linea in lineas_descripcion:
-        textobject.textLine(linea)
-    c.drawText(textobject)
-    
-    # Firma simulada
-    c.setFont("Helvetica-Bold", 10)
-    c.drawCentredString(letter[0]/2, 100, f"{emisor.nombres_apellidos}")
-    c.setFont("Helvetica", 9)
-    c.drawCentredString(letter[0]/2, 85, "Fundacion Instituto de Ingenieria")
-    c.drawCentredString(letter[0]/2, 70, f"{memo.fecha.strftime('%Y-%m-%d')} 15:59:19")
-    
-    c.save()
-    capa_texto.seek(0)
+    emisor_cargo = emisor.cargos[0].nombre if emisor.cargos else "Sin cargo"
+    receptor_cargo = receptor.cargos[0].nombre if receptor.cargos else "Sin cargo"
 
-    # 3. Buscar la plantilla PDF original en tu sistema
+    buffer = io.BytesIO()
+
+    # 2. Configurar el Documento Inteligente
+    doc = SimpleDocTemplate(
+        buffer, 
+        pagesize=letter,
+        rightMargin=50, 
+        leftMargin=50, 
+        topMargin=110, 
+        bottomMargin=115, 
+        title=f"Memorándum {memo.numero_documento}", 
+        author=emisor.nombres_apellidos
+    )
+
+    # 3. Función que inyecta las imágenes de fondo
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    ruta_plantilla = os.path.join(base_dir, "templates_pdf", "plantilla_memorandum.pdf")
+    cintillo_path = os.path.join(base_dir, "templates_pdf", "cintillo.png")
     
-    try:
-        # 4. Fusionar la plantilla con la capa de texto
-        plantilla_pdf = PdfReader(open(ruta_plantilla, "rb"))
-        texto_pdf = PdfReader(capa_texto)
-        
-        # Tomamos la primera página de la plantilla y le estampamos el texto
-        pagina_resultado = plantilla_pdf.pages[0]
-        pagina_resultado.merge_page(texto_pdf.pages[0])
-        
-        # Guardar el resultado final
-        salida = PdfWriter()
-        salida.add_page(pagina_resultado)
-        
-        buffer_salida = io.BytesIO()
-        salida.write(buffer_salida)
-        buffer_salida.seek(0)
-        
-        # 5. Devolver al navegador
-        return Response(content=buffer_salida.getvalue(), media_type="application/pdf")
-        
-    except FileNotFoundError:
-        raise HTTPException(status_code=500, detail=f"No se encontró la plantilla en: {ruta_plantilla}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fusionando PDF: {str(e)}")
+    pie_opcion_1 = os.path.join(base_dir, "templates_pdf", "pie_pagina.png")
+    pie_opcion_2 = os.path.join(base_dir, "templates_pdf", "pie_de_pagina.png")
+    pie_path = pie_opcion_2 if os.path.exists(pie_opcion_2) else pie_opcion_1
+
+    def dibujar_fondos(canvas, doc):
+        canvas.saveState()
+        # Dibujar Cintillo arriba
+        if os.path.exists(cintillo_path):
+            canvas.drawImage(cintillo_path, 0, 792 - 90, width=612, height=90)
+            
+        # Dibujar Pie de Página abajo
+        if os.path.exists(pie_path):
+            canvas.drawImage(pie_path, 0, 0, width=612, height=115) 
+        canvas.restoreState()
+
+    # 4. Construir la "Historia"
+    Story = []
+    styles = getSampleStyleSheet()
+    
+    estilo_titulo = ParagraphStyle('Titulo', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=12, alignment=TA_CENTER)
+    estilo_correlativo = ParagraphStyle('Correlativo', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=11, alignment=TA_RIGHT)
+    estilo_negrita = ParagraphStyle('Negrita', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=11)
+    estilo_normal = ParagraphStyle('Texto', parent=styles['Normal'], fontName='Helvetica', fontSize=11)
+    estilo_cuerpo = ParagraphStyle('Cuerpo', parent=styles['Normal'], fontName='Helvetica', fontSize=11, leading=15, alignment=TA_JUSTIFY)
+
+    # --- A. TÍTULO Y CORRELATIVO ---
+    data_cabecera = [
+        ["", Paragraph("MEMORÁNDUM", estilo_titulo), Paragraph(str(memo.numero_documento), estilo_correlativo)]
+    ]
+    t_cabecera = Table(data_cabecera, colWidths=[100, 312, 100])
+    Story.append(t_cabecera)
+    Story.append(Spacer(1, 15))
+
+    # --- B. BLOQUE DE CABECERAS ---
+    data_info = [
+        [Paragraph("PARA:", estilo_negrita), Paragraph(f"{receptor.nombres_apellidos} - {receptor_cargo}", estilo_normal)],
+        [Paragraph("DE:", estilo_negrita), Paragraph(f"{emisor.nombres_apellidos} - {emisor_cargo}", estilo_normal)],
+        [Paragraph("FECHA:", estilo_negrita), Paragraph(f"{memo.fecha.strftime('%d/%m/%Y')}", estilo_normal)],
+        [Paragraph("ASUNTO:", estilo_negrita), Paragraph(f"{memo.asunto}", estilo_normal)]
+    ]
+
+    t_info = Table(data_info, colWidths=[70, 442])
+    t_info.setStyle(TableStyle([
+        ('LINEABOVE', (0,0), (-1,0), 2, colors.HexColor('#cc0000')),
+        ('LINEBELOW', (0,-1), (-1,-1), 2, colors.HexColor('#cc0000')),
+        ('VALIGN', (0,0), (-1,-1), 'TOP'),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+        ('TOPPADDING', (0,0), (-1,-1), 8),
+    ]))
+    Story.append(t_info)
+    Story.append(Spacer(1, 20))
+
+    # --- C. DESCRIPCIÓN ---
+    parrafos_brutos = memo.descripcion.split('\n')
+    for p in parrafos_brutos:
+        if p.strip():
+            texto_formateado = f'<p align="justify">{p.strip()}</p>'
+            Story.append(Paragraph(texto_formateado, estilo_cuerpo))
+            Story.append(Spacer(1, 8))
+
+    # 5. Generar el PDF final
+    doc.build(Story, onFirstPage=dibujar_fondos, onLaterPages=dibujar_fondos)
+
+    buffer.seek(0)
+    
+    # 6. Cabecera limpia y estricta para abrir en el navegador
+    headers = {
+        "Content-Disposition": "inline"
+    }
+    
+    return Response(content=buffer.getvalue(), media_type="application/pdf", headers=headers)
 
 @app.post("/api/puntos-cuenta", response_model=schemas.PuntoCuentaRespuesta)
 def crear_punto_cuenta(punto: schemas.PuntoCuentaCrear, db: Session = Depends(get_db), usuario_actual: dict = Depends(get_usuario_actual)):
@@ -518,3 +603,53 @@ def generar_pdf_universal(tipo_documento: str, doc_id: int, db: Session = Depend
         output.write(f)
 
     return FileResponse(path=pdf_path, filename=pdf_filename, media_type='application/pdf')
+
+    # ==========================================
+# MÓDULO DE ADMINISTRACIÓN DE USUARIOS
+# ==========================================
+@app.get("/api/admin/usuarios")
+def obtener_usuarios_admin(db: Session = Depends(get_db), usuario_actual: dict = Depends(get_usuario_actual)):
+    """Devuelve la lista completa de empleados con sus cuentas de usuario para el panel de Gestión Humana"""
+    
+    # Seguridad: Solo los roles de administrador pueden ver esta lista
+    if usuario_actual.get("rol") not in ["ADMIN USERS", "ADMIN GRAL", "ADMIN GLOBAL"]:
+        raise HTTPException(status_code=403, detail="Acceso denegado. No tienes permisos de administrador.")
+
+    empleados = db.query(models.Empleado).order_by(models.Empleado.nombres_apellidos.asc()).all()
+    
+    resultados = []
+    for emp in empleados:
+        # Buscamos si el empleado ya reclamó su cuenta web
+        user = db.query(models.Usuario).filter(models.Usuario.id == emp.usuario_id).first()
+        
+        resultados.append({
+            "cedula": emp.cedula,
+            "nombres_apellidos": emp.nombres_apellidos,
+            "fecha_ingreso": emp.fecha_ingreso.strftime("%d/%m/%Y") if emp.fecha_ingreso else "N/A",
+            "correo": user.correo if user else "Sin cuenta web",
+            "estado": user.estado if user else False,
+            "tiene_cuenta": bool(user)
+        })
+        
+    return resultados
+
+@app.put("/api/admin/usuarios/{cedula}/deshabilitar")
+def deshabilitar_usuario_admin(cedula: str, db: Session = Depends(get_db), usuario_actual: dict = Depends(get_usuario_actual)):
+    """Apaga el acceso al sistema de un usuario específico"""
+    
+    if usuario_actual.get("rol") not in ["ADMIN USERS", "ADMIN GRAL", "ADMIN GLOBAL"]:
+        raise HTTPException(status_code=403, detail="Acceso denegado.")
+
+    empleado = db.query(models.Empleado).filter(models.Empleado.cedula == cedula).first()
+    if not empleado or not empleado.usuario_id:
+        raise HTTPException(status_code=404, detail="El usuario no existe o no tiene cuenta web.")
+        
+    usuario = db.query(models.Usuario).filter(models.Usuario.id == empleado.usuario_id).first()
+    
+    # Invertimos el estado (Si está activo lo apaga, si está apagado lo prende)
+    usuario.estado = not usuario.estado 
+    
+    db.commit()
+    
+    accion = "habilitado" if usuario.estado else "deshabilitado"
+    return {"mensaje": f"El usuario ha sido {accion} exitosamente."}

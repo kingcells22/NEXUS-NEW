@@ -22,7 +22,8 @@ const toggleTheme = () => {
 const usuarioActual = ref({
   nombres_apellidos: "Cargando...",
   correo: "Buscando datos...",
-  inicial: "?"
+  inicial: "?",
+  rol: "USER NORMAL" // <--- Agregamos el rol para poder leerlo
 });
 
 onMounted(async () => {
@@ -41,6 +42,9 @@ onMounted(async () => {
         usuarioActual.value.nombres_apellidos = data.nombres_apellidos;
         usuarioActual.value.correo = data.correo;
         usuarioActual.value.inicial = data.nombres_apellidos.charAt(0).toUpperCase();
+        
+        // ¡CAPTURAMOS EL ROL DEL BACKEND!
+        usuarioActual.value.rol = data.rol;
       } else {
         console.error("Error de autorización. Token inválido o expirado.");
         usuarioActual.value.nombres_apellidos = "Sesión Expirada";
@@ -105,7 +109,6 @@ const logout = () => {
               v-if="memoDesplegable" 
               class="mt-1 py-1 pl-12 text-sm space-y-3"
             >
-              <!-- AQUI ESTA EL CAMBIO HACIA LA BANDEJA -->
               <router-link to="/dashboard/emitidos" class="block font-bold transition-colors" :class="isDarkMode ? 'text-white hover:text-gray-300' : 'text-gray-900 hover:text-red-600'">
                 <span class="mr-1 text-gray-500">•</span> Emitidos
               </router-link>
@@ -127,7 +130,28 @@ const logout = () => {
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
             Punto de Cuenta
           </a>
-        </nav>
+
+          <div v-if="['ADMIN USERS', 'ADMIN GRAL', 'ADMIN GLOBAL'].includes(usuarioActual.rol)">
+            <div class="pt-6 pb-2">
+              <p class="text-xs font-semibold uppercase tracking-wider" :class="isDarkMode ? 'text-gray-500' : 'text-gray-400'">Administrador</p>
+            </div>
+            
+            <router-link to="/dashboard/usuarios" class="flex items-center gap-3 px-4 py-2 rounded-md transition-colors" :class="isDarkMode ? 'text-gray-300 hover:text-white hover:bg-gray-900' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+              Ver Usuarios
+            </router-link>
+
+            <a href="#" class="flex items-center gap-3 px-4 py-2 rounded-md transition-colors" :class="isDarkMode ? 'text-gray-300 hover:text-white hover:bg-gray-900' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"></path></svg>
+              Activar Usuarios
+            </a>
+
+            <a href="#" class="flex items-center gap-3 px-4 py-2 rounded-md transition-colors" :class="isDarkMode ? 'text-gray-300 hover:text-white hover:bg-gray-900' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"></path></svg>
+              Crear Usuarios
+            </a>
+          </div>
+          </nav>
       </div>
 
       <div class="p-4">

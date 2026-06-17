@@ -36,6 +36,11 @@ const router = createRouter({
           component: EmitidosView
         },
         {
+          path: 'usuarios',
+          name: 'usuarios',
+          component: () => import('../views/UsuariosView.vue') // Luego crearemos este archivo
+        },
+        {
           path: 'redactar-memo',
           name: 'redactar-memorandum',
           component: RedactarMemorandum

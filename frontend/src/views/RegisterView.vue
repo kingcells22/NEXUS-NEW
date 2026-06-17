@@ -1,211 +1,258 @@
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
-import { useRouter } from 'vue-router'
-import { Loader2, CheckCircle2 } from 'lucide-vue-next'
-import axios from 'axios'
+import { ref } from 'vue';
+import { useRouter } from 'vue-router';
 
-const router = useRouter()
-const isLoading = ref(false)
-const successMessage = ref('')
-const errorMessage = ref('')
-const isShaking = ref(false) // Para activar la animación
+const router = useRouter();
 
-const triggerShake = () => {
-  isShaking.value = true
-  setTimeout(() => isShaking.value = false, 500)
-}
+// Estados de la búsqueda
+const cedulaBusqueda = ref('');
+const buscandoCedula = ref(false);
+const empleadoEncontrado = ref(false);
 
-// Lista estándar de preguntas de seguridad
-const preguntasEstandar = [
-  '¿Cuál fue el nombre de tu primera mascota?',
-  '¿En qué ciudad naciste?',
-  '¿Cuál es el segundo nombre de tu madre?',
-  '¿Cuál fue tu primera escuela primaria?',
-  '¿Cuál es el nombre de tu mejor amigo de la infancia?',
-  '¿Marca de tu primer vehículo?'
-]
+// Visibilidad de contraseñas (El "Ojito")
+const mostrarPassword = ref(false);
+const mostrarConfirmar = ref(false);
 
-const formData = reactive({
-  correo: '',
-  password: '',
-  confirmPassword: '', // Nuevo campo
+const isSubmitting = ref(false);
+
+// Modelo del formulario
+const form = ref({
   cedula: '',
   nombres_apellidos: '',
   cargo: '',
   centro: '',
-  pregunta_seguridad_1: '', // Inicia vacío para obligar a seleccionar
+  correo: '',
+  password: '',
+  confirmar_password: '',
+  pregunta_seguridad_1: '',
   respuesta_seguridad_1: '',
   pregunta_seguridad_2: '',
   respuesta_seguridad_2: '',
-  validez_dias: 90 
-})
+  validez_dias: 90 // Por defecto 90 días
+});
 
-const onSubmit = async () => {
-  errorMessage.value = ''
-  successMessage.value = ''
-
-  if (formData.password !== formData.confirmPassword) {
-    errorMessage.value = 'Las contraseñas no coinciden.'
-    triggerShake()
-    return
-  }
-
-  // Validación: No pueden elegir la misma pregunta dos veces
-  if (formData.pregunta_seguridad_1 !== '' && formData.pregunta_seguridad_1 === formData.pregunta_seguridad_2) {
-    errorMessage.value = 'Debes seleccionar dos preguntas de seguridad diferentes.'
-    triggerShake()
-    return
-  }
-
-  isLoading.value = true
-
+// PASO 1: Buscar al empleado en la base de datos
+const buscarEmpleado = async () => {
+  if (!cedulaBusqueda.value) return;
+  
+  buscandoCedula.value = true;
   try {
-    // Usamos la variable de entorno que configuraste (con respaldo local por si acaso)
-    const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api'
-    await axios.post(`${apiUrl}/usuarios`, formData)
-    
-    successMessage.value = '¡Usuario administrador creado exitosamente!'
-    
-    // Esperamos 2 segundos y lo mandamos al login
-    setTimeout(() => {
-      router.push('/')
-    }, 2000)
+    const response = await fetch(`http://127.0.0.1:8000/api/empleados/buscar/${cedulaBusqueda.value}`);
+    const data = await response.json();
 
-  } catch (error: any) {
-    // Si Axios tiene respuesta, mostramos el detalle técnico real
-    if (error.response) {
-      errorMessage.value = JSON.stringify(error.response.data.detail || error.response.data);
-    } else {
-      errorMessage.value = 'No hubo conexión con el servidor. Verifica que FastAPI esté corriendo.'
+    if (!response.ok) {
+      alert(data.detail || "Error al buscar la cédula.");
+      empleadoEncontrado.value = false;
+      return;
     }
-    triggerShake()
-  } finally {
-    isLoading.value = false
-  }
-}
 
-const goToLogin = () => {
-  router.push('/')
-}
+    // Auto-llenar el formulario y bloquear la vista
+    form.value.cedula = data.cedula;
+    form.value.nombres_apellidos = data.nombres_apellidos;
+    form.value.cargo = data.cargo;
+    form.value.centro = data.centro;
+    
+    empleadoEncontrado.value = true;
+    alert(`¡Empleado encontrado! Bienvenido/a ${data.nombres_apellidos}. Por favor, complete sus credenciales.`);
+
+  } catch (error) {
+    console.error("Error de conexión:", error);
+    alert("Error de conexión con el servidor.");
+  } finally {
+    buscandoCedula.value = false;
+  }
+};
+
+// PASO 2: Registrar la cuenta oficialmente
+const procesarRegistro = async () => {
+  if (form.value.password !== form.value.confirmar_password) {
+    alert("Las contraseñas no coinciden. Por favor, verifica usando el ícono del ojo.");
+    return;
+  }
+
+  isSubmitting.value = true;
+  try {
+    const response = await fetch('http://127.0.0.1:8000/api/usuarios', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        correo: form.value.correo,
+        password: form.value.password,
+        cedula: form.value.cedula,
+        nombres_apellidos: form.value.nombres_apellidos,
+        cargo: form.value.cargo,
+        centro: form.value.centro,
+        pregunta_seguridad_1: form.value.pregunta_seguridad_1,
+        respuesta_seguridad_1: form.value.respuesta_seguridad_1,
+        pregunta_seguridad_2: form.value.pregunta_seguridad_2,
+        respuesta_seguridad_2: form.value.respuesta_seguridad_2,
+        validez_dias: form.value.validez_dias
+      })
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      alert(data.detail || "Ocurrió un error en el registro.");
+      return;
+    }
+
+    alert("¡Cuenta registrada y rol asignado exitosamente! Ya puedes iniciar sesión.");
+    router.push('/');
+
+  } catch (error) {
+    console.error(error);
+    alert("Error de conexión con el servidor.");
+  } finally {
+    isSubmitting.value = false;
+  }
+};
 </script>
 
 <template>
-  <div class="min-h-screen flex items-center justify-center bg-background p-4">
-    <div :class="['w-full max-w-3xl bg-card border-border border rounded-xl shadow-lg p-8', { 'animate-shake': isShaking }]">
+  <div class="min-h-screen bg-[#0a0a0a] flex items-center justify-center p-4">
+    <div class="max-w-2xl w-full bg-[#141414] border border-gray-800 rounded-lg shadow-2xl p-8">
       
-      <div class="flex flex-col space-y-2 text-center mb-8">
-        <h1 class="text-3xl font-semibold tracking-tight text-primary">NEXUS</h1>
-        <p class="text-muted-foreground">Registro de Usuario Administrador</p>
+      <div class="text-center mb-8">
+        <h2 class="text-3xl font-bold text-white">NEXUS <span class="text-red-600">FIIIDT</span></h2>
+        <p class="text-gray-400 mt-2">Activación de Cuenta Institucional</p>
       </div>
 
-      <form @submit.prevent="onSubmit" class="space-y-4" novalidate>
+      <div v-if="!empleadoEncontrado" class="space-y-6">
+        <div class="bg-blue-900/20 border border-blue-800 text-blue-300 p-4 rounded-md text-sm text-center">
+          Para crear su usuario, primero debemos validar su información en la base de datos de Gestión Humana.
+        </div>
         
+        <div>
+          <label class="block text-sm font-semibold text-white mb-2">Ingrese su Cédula de Identidad</label>
+          <div class="flex gap-4">
+            <input 
+              type="text" 
+              v-model="cedulaBusqueda" 
+              placeholder="V-12345678"
+              class="flex-1 bg-[#0a0a0a] border border-gray-800 text-white rounded-md p-3 focus:ring-red-500 focus:border-red-500"
+              @keyup.enter="buscarEmpleado"
+            >
+            <button 
+              @click="buscarEmpleado" 
+              :disabled="buscandoCedula || !cedulaBusqueda"
+              class="bg-red-600 hover:bg-red-500 disabled:bg-gray-600 text-white font-bold py-3 px-6 rounded-md transition-colors"
+            >
+              {{ buscandoCedula ? 'Buscando...' : 'Validar' }}
+            </button>
+          </div>
+        </div>
+        
+        <div class="text-center mt-4">
+          <a href="/login" class="text-sm text-red-500 hover:text-red-400">¿Ya tienes cuenta? Inicia Sesión</a>
+        </div>
+      </div>
+
+      <form v-else @submit.prevent="procesarRegistro" class="space-y-6">
+        
+        <div class="bg-[#0a0a0a] p-4 rounded-md border border-gray-800 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="md:col-span-2">
+            <label class="block text-xs font-medium text-gray-500 mb-1">Nombre Completo</label>
+            <input type="text" v-model="form.nombres_apellidos" disabled class="w-full bg-transparent text-white font-semibold cursor-not-allowed">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Cédula</label>
+            <input type="text" v-model="form.cedula" disabled class="w-full bg-transparent text-white font-semibold cursor-not-allowed">
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-xs font-medium text-gray-500 mb-1">Cargo</label>
+            <input type="text" v-model="form.cargo" disabled class="w-full bg-transparent text-gray-300 cursor-not-allowed">
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-xs font-medium text-gray-500 mb-1">Centro / Oficina</label>
+            <input type="text" v-model="form.centro" disabled class="w-full bg-transparent text-gray-300 cursor-not-allowed">
+          </div>
+        </div>
+
+        <hr class="border-gray-800">
+
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div class="space-y-2">
-            <label class="text-sm font-medium">Cédula de Identidad</label>
-            <input v-model="formData.cedula" type="text" placeholder="Ej. 12345678" required class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
+          <div class="md:col-span-2">
+            <label class="block text-sm font-semibold text-white mb-2">Correo Electrónico Institucional</label>
+            <input type="email" v-model="form.correo" placeholder="ejemplo@fii.gob.ve" required class="w-full bg-[#0a0a0a] border border-gray-800 text-white rounded-md p-3 focus:border-red-500">
           </div>
 
-          <div class="space-y-2">
-            <label class="text-sm font-medium">Nombres y Apellidos</label>
-            <input v-model="formData.nombres_apellidos" type="text" placeholder="Ej. Juan Pérez" required class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
+          <div class="relative">
+            <label class="block text-sm font-semibold text-white mb-2">Contraseña</label>
+            <div class="relative">
+              <input :type="mostrarPassword ? 'text' : 'password'" v-model="form.password" required class="w-full bg-[#0a0a0a] border border-gray-800 text-white rounded-md p-3 pr-10 focus:border-red-500">
+              <button type="button" @click="mostrarPassword = !mostrarPassword" class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-500 hover:text-white">
+                <svg v-if="!mostrarPassword" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                <svg v-else class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" /></svg>
+              </button>
+            </div>
           </div>
 
-          <div class="space-y-2">
-            <label class="text-sm font-medium">Correo Electrónico Institucional</label>
-            <input v-model="formData.correo" type="email" placeholder="ejemplo@fii.gob.ve" required class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
+          <div class="relative">
+            <label class="block text-sm font-semibold text-white mb-2">Confirmar Contraseña</label>
+            <div class="relative">
+              <input :type="mostrarConfirmar ? 'text' : 'password'" v-model="form.confirmar_password" required class="w-full bg-[#0a0a0a] border border-gray-800 text-white rounded-md p-3 pr-10 focus:border-red-500">
+              <button type="button" @click="mostrarConfirmar = !mostrarConfirmar" class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-500 hover:text-white">
+                <svg v-if="!mostrarConfirmar" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                <svg v-else class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" /></svg>
+              </button>
+            </div>
           </div>
+        </div>
 
-          <div class="space-y-2">
-            <label class="text-sm font-medium">Días de Validez de Clave</label>
-            <select v-model="formData.validez_dias" class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm">
-              <option value="30">30 días</option>
-              <option value="60">60 días</option>
-              <option value="90">90 días</option>
-              <option value="180">180 días</option>
+        <hr class="border-gray-800">
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div>
+            <label class="block text-sm font-semibold text-white mb-2">Pregunta de Seguridad 1</label>
+            <select v-model="form.pregunta_seguridad_1" required class="w-full bg-[#0a0a0a] border border-gray-800 text-white text-sm rounded-md p-3 focus:border-red-500">
+              <option value="" disabled>Seleccione una pregunta</option>
+              <option value="¿Cuál es tu color favorito?">¿Cuál es tu color favorito?</option>
+              <option value="¿Nombre de tu primera mascota?">¿Nombre de tu primera mascota?</option>
+              <option value="¿Ciudad donde naciste?">¿Ciudad donde naciste?</option>
             </select>
+            <input type="text" v-model="form.respuesta_seguridad_1" placeholder="Respuesta 1" required class="w-full bg-[#1a1a1a] border-t-0 border border-gray-800 text-white rounded-b-md p-3 focus:border-red-500 mt-1">
           </div>
 
-          <div class="space-y-2">
-            <label class="text-sm font-medium">Contraseña de Acceso</label>
-            <input v-model="formData.password" type="password" placeholder="********" required class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
-          </div>
-
-          <div class="space-y-2">
-            <label class="text-sm font-medium">Confirmar Contraseña</label>
-            <input v-model="formData.confirmPassword" type="password" placeholder="********" required class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
-          </div>
-
-          <div class="space-y-2">
-            <label class="text-sm font-medium">Cargo Oficial</label>
-            <input v-model="formData.cargo" type="text" placeholder="Ej. Analista de Sistemas" required class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
-          </div>
-
-          <div class="space-y-2">
-            <label class="text-sm font-medium">Centro de Adscripción</label>
-            <input v-model="formData.centro" type="text" placeholder="Ej. Centro de Sistemas (CSICE)" required class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
+          <div>
+            <label class="block text-sm font-semibold text-white mb-2">Pregunta de Seguridad 2</label>
+            <select v-model="form.pregunta_seguridad_2" required class="w-full bg-[#0a0a0a] border border-gray-800 text-white text-sm rounded-md p-3 focus:border-red-500">
+              <option value="" disabled>Seleccione una pregunta</option>
+              <option value="¿Cuál era el apodo de tu abuelo?">¿Cuál era el apodo de tu abuelo?</option>
+              <option value="¿Nombre de tu mejor amigo de la infancia?">¿Nombre de tu mejor amigo de la infancia?</option>
+              <option value="¿Marca de tu primer carro?">¿Marca de tu primer carro?</option>
+            </select>
+            <input type="text" v-model="form.respuesta_seguridad_2" placeholder="Respuesta 2" required class="w-full bg-[#1a1a1a] border-t-0 border border-gray-800 text-white rounded-b-md p-3 focus:border-red-500 mt-1">
           </div>
         </div>
 
-        <div class="border-t border-border mt-6 pt-6">
-          <p class="text-sm font-semibold text-foreground mb-4">Configuración de Seguridad</p>
-          
-          <div class="grid grid-cols-1 gap-6">
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
-              <div class="space-y-2 flex-1">
-                <label class="text-sm font-medium">Pregunta de Seguridad 1</label>
-                <select v-model="formData.pregunta_seguridad_1" required class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
-                  <option value="" disabled>Seleccione una pregunta...</option>
-                  <option v-for="pregunta in preguntasEstandar" :key="pregunta" :value="pregunta">
-                    {{ pregunta }}
-                  </option>
-                </select>
-              </div>
-              <div class="space-y-2 flex-1">
-                <label class="text-sm font-medium">Respuesta 1</label>
-                <input v-model="formData.respuesta_seguridad_1" type="password" placeholder="Tu respuesta secreta" required class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
-              </div>
-            </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
-              <div class="space-y-2 flex-1">
-                <label class="text-sm font-medium">Pregunta de Seguridad 2</label>
-                <select v-model="formData.pregunta_seguridad_2" required class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
-                  <option value="" disabled>Seleccione una pregunta...</option>
-                  <option v-for="pregunta in preguntasEstandar" :key="pregunta" :value="pregunta">
-                    {{ pregunta }}
-                  </option>
-                </select>
-              </div>
-              <div class="space-y-2 flex-1">
-                <label class="text-sm font-medium">Respuesta 2</label>
-                <input v-model="formData.respuesta_seguridad_2" type="password" placeholder="Tu respuesta secreta" required class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
-              </div>
-            </div>
-          </div>
+        <div>
+          <label class="block text-sm font-semibold text-white mb-2">Periodo de Validez de la Contraseña (Días)</label>
+          <select v-model="form.validez_dias" class="w-full bg-[#0a0a0a] border border-gray-800 text-white rounded-md p-3 focus:border-red-500">
+            <option :value="30">30 Días</option>
+            <option :value="60">60 Días</option>
+            <option :value="90">90 Días</option>
+            <option :value="180">180 Días</option>
+          </select>
         </div>
 
-        <button type="submit" :disabled="isLoading" class="mt-8 inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground shadow hover:bg-primary/90 h-10 px-4 py-2 w-full">
-          <Loader2 v-if="isLoading" class="mr-2 h-4 w-4 animate-spin" />
-          Registrar Usuario
-        </button>
-
+        <div class="flex gap-4 pt-4">
+          <button 
+            type="button" 
+            @click="empleadoEncontrado = false" 
+            class="w-1/3 bg-gray-800 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded-md transition-colors"
+          >
+            Cancelar
+          </button>
+          <button 
+            type="submit" 
+            :disabled="isSubmitting"
+            class="w-2/3 bg-red-600 hover:bg-red-500 disabled:bg-red-800 disabled:cursor-not-allowed text-white font-bold py-3 px-6 rounded-md transition-colors shadow-lg shadow-red-900/20"
+          >
+            {{ isSubmitting ? 'Creando cuenta...' : 'Finalizar Registro' }}
+          </button>
+        </div>
       </form>
-
-      <div v-if="successMessage" class="mt-6 p-4 rounded-lg bg-green-500/10 border border-green-500/50 text-green-500 flex items-center gap-3">
-        <CheckCircle2 class="h-5 w-5" />
-        <p class="text-sm font-medium">{{ successMessage }}</p>
-      </div>
-
-      <div v-if="errorMessage" class="mt-6 p-4 rounded-lg bg-destructive/10 border border-destructive/50 text-destructive text-sm font-medium">
-        {{ errorMessage }}
-      </div>
-
-      <div class="mt-6 text-center">
-        <button @click="goToLogin" class="text-sm text-muted-foreground hover:text-primary transition-colors hover:underline">
-          Volver al Inicio de Sesión
-        </button>
-      </div>
     </div>
   </div>
 </template>
