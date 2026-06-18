@@ -6,10 +6,15 @@ import { useAuthStore } from "../stores/auth.store";
 const router = useRouter();
 const authStore = useAuthStore();
 
-// Estados para los menús y la interfaz
+// Estados para los menús desplegables
 const memoDesplegable = ref(false);
+const oficioDesplegable = ref(false);
+const puntoInfoDesplegable = ref(false);
+const puntoCuentaDesplegable = ref(false);
+const puntoMinistraDesplegable = ref(false); // <--- NUEVO ESTADO AGREGADO
+
 const perfilDesplegable = ref(false);
-const isSidebarOpen = ref(true); // <--- Nuevo estado para ocultar el panel
+const isSidebarOpen = ref(true); 
 
 // Estado para el Tema (Modo Oscuro / Claro)
 const isDarkMode = ref(true);
@@ -23,7 +28,7 @@ const usuarioActual = ref({
   nombres_apellidos: "Cargando...",
   correo: "Buscando datos...",
   inicial: "?",
-  rol: "USER NORMAL" // <--- Agregamos el rol para poder leerlo
+  rol: "USER NORMAL" 
 });
 
 onMounted(async () => {
@@ -43,21 +48,16 @@ onMounted(async () => {
         usuarioActual.value.correo = data.correo;
         usuarioActual.value.inicial = data.nombres_apellidos.charAt(0).toUpperCase();
         
-        // ¡CAPTURAMOS EL ROL DEL BACKEND!
+        // Capturamos el rol
         usuarioActual.value.rol = data.rol;
       } else {
-        console.error("Error de autorización. Token inválido o expirado.");
+        console.error("Error de autorización.");
         usuarioActual.value.nombres_apellidos = "Sesión Expirada";
         usuarioActual.value.inicial = "X";
       }
-    } else {
-      console.warn("No se encontró ningún token en el LocalStorage.");
-      usuarioActual.value.nombres_apellidos = "Usuario Desconocido";
-      usuarioActual.value.correo = "Falta Token de Sesión";
     }
   } catch (error) {
     console.error("Error de conexión al cargar perfil:", error);
-    usuarioActual.value.nombres_apellidos = "Error de Conexión";
   }
 });
 
@@ -93,6 +93,7 @@ const logout = () => {
             <p class="text-xs font-semibold uppercase tracking-wider" :class="isDarkMode ? 'text-gray-500' : 'text-gray-400'">Reportes</p>
           </div>
 
+          <!-- ================= MEMORANDUM (Visible para todos) ================= -->
           <div>
             <button 
               @click="memoDesplegable = !memoDesplegable" 
@@ -105,10 +106,7 @@ const logout = () => {
               </div>
               <span class="text-[10px] transition-transform" :class="memoDesplegable ? 'rotate-180' : ''">▲</span>
             </button>
-            <div 
-              v-if="memoDesplegable" 
-              class="mt-1 py-1 pl-12 text-sm space-y-3"
-            >
+            <div v-if="memoDesplegable" class="mt-1 py-1 pl-12 text-sm space-y-3">
               <router-link to="/dashboard/emitidos" class="block font-bold transition-colors" :class="isDarkMode ? 'text-white hover:text-gray-300' : 'text-gray-900 hover:text-red-600'">
                 <span class="mr-1 text-gray-500">•</span> Emitidos
               </router-link>
@@ -118,19 +116,99 @@ const logout = () => {
             </div>
           </div>
 
-          <a href="#" class="flex items-center gap-3 px-4 py-2 rounded-md transition-colors" :class="isDarkMode ? 'text-gray-300 hover:text-white hover:bg-gray-900' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-            Oficio
-          </a>
-          <a href="#" class="flex items-center gap-3 px-4 py-2 rounded-md transition-colors" :class="isDarkMode ? 'text-gray-300 hover:text-white hover:bg-gray-900' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-            Punto de Informacion
-          </a>
-          <a href="#" class="flex items-center gap-3 px-4 py-2 rounded-md transition-colors" :class="isDarkMode ? 'text-gray-300 hover:text-white hover:bg-gray-900' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-            Punto de Cuenta
-          </a>
+          <!-- ================= OFICIO (Visible para todos) ================= -->
+          <div>
+            <button 
+              @click="oficioDesplegable = !oficioDesplegable" 
+              class="w-full flex items-center justify-between px-4 py-2 rounded-md transition-colors"
+              :class="isDarkMode ? 'text-gray-300 hover:text-white hover:bg-gray-900' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'"
+            >
+              <div class="flex items-center gap-3">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                Oficio
+              </div>
+              <span class="text-[10px] transition-transform" :class="oficioDesplegable ? 'rotate-180' : ''">▲</span>
+            </button>
+            <div v-if="oficioDesplegable" class="mt-1 py-1 pl-12 text-sm space-y-3">
+              <a href="#" class="block font-bold transition-colors" :class="isDarkMode ? 'text-white hover:text-gray-300' : 'text-gray-900 hover:text-red-600'">
+                <span class="mr-1 text-gray-500">•</span> Emitidos
+              </a>
+              <a href="#" class="block font-bold transition-colors" :class="isDarkMode ? 'text-white hover:text-gray-300' : 'text-gray-900 hover:text-red-600'">
+                <span class="mr-1 text-gray-500">•</span> Recibidos
+              </a>
+            </div>
+          </div>
 
+          <!-- ================= PUNTO DE INFORMACION (Solo ADMINS y PDTE) ================= -->
+          <div v-if="['ADMIN USERS', 'ADMIN GRAL', 'ADMIN GLOBAL'].includes(usuarioActual.rol)">
+            <button 
+              @click="puntoInfoDesplegable = !puntoInfoDesplegable" 
+              class="w-full flex items-center justify-between px-4 py-2 rounded-md transition-colors"
+              :class="isDarkMode ? 'text-gray-300 hover:text-white hover:bg-gray-900' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'"
+            >
+              <div class="flex items-center gap-3">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                Punto de Información
+              </div>
+              <span class="text-[10px] transition-transform" :class="puntoInfoDesplegable ? 'rotate-180' : ''">▲</span>
+            </button>
+            <div v-if="puntoInfoDesplegable" class="mt-1 py-1 pl-12 text-sm space-y-3">
+              <a href="#" class="block font-bold transition-colors" :class="isDarkMode ? 'text-white hover:text-gray-300' : 'text-gray-900 hover:text-red-600'">
+                <span class="mr-1 text-gray-500">•</span> Emitidos
+              </a>
+              <a href="#" class="block font-bold transition-colors" :class="isDarkMode ? 'text-white hover:text-gray-300' : 'text-gray-900 hover:text-red-600'">
+                <span class="mr-1 text-gray-500">•</span> Recibidos
+              </a>
+            </div>
+          </div>
+
+          <!-- ================= PUNTO DE CUENTA (Solo ADMINS y PDTE) ================= -->
+          <div v-if="['ADMIN USERS', 'ADMIN GRAL', 'ADMIN GLOBAL'].includes(usuarioActual.rol)">
+            <button 
+              @click="puntoCuentaDesplegable = !puntoCuentaDesplegable" 
+              class="w-full flex items-center justify-between px-4 py-2 rounded-md transition-colors"
+              :class="isDarkMode ? 'text-gray-300 hover:text-white hover:bg-gray-900' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'"
+            >
+              <div class="flex items-center gap-3">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                Punto de Cuenta
+              </div>
+              <span class="text-[10px] transition-transform" :class="puntoCuentaDesplegable ? 'rotate-180' : ''">▲</span>
+            </button>
+            <div v-if="puntoCuentaDesplegable" class="mt-1 py-1 pl-12 text-sm space-y-3">
+              <a href="#" class="block font-bold transition-colors" :class="isDarkMode ? 'text-white hover:text-gray-300' : 'text-gray-900 hover:text-red-600'">
+                <span class="mr-1 text-gray-500">•</span> Emitidos
+              </a>
+              <a href="#" class="block font-bold transition-colors" :class="isDarkMode ? 'text-white hover:text-gray-300' : 'text-gray-900 hover:text-red-600'">
+                <span class="mr-1 text-gray-500">•</span> Recibidos
+              </a>
+            </div>
+          </div>
+
+          <!-- ================= PUNTO A LA MINISTRA (Solo ADMINS y PDTE) ================= -->
+          <div v-if="['ADMIN USERS', 'ADMIN GRAL', 'ADMIN GLOBAL'].includes(usuarioActual.rol)">
+            <button 
+              @click="puntoMinistraDesplegable = !puntoMinistraDesplegable" 
+              class="w-full flex items-center justify-between px-4 py-2 rounded-md transition-colors"
+              :class="isDarkMode ? 'text-gray-300 hover:text-white hover:bg-gray-900' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'"
+            >
+              <div class="flex items-center gap-3">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                Pto. a la Ministra
+              </div>
+              <span class="text-[10px] transition-transform" :class="puntoMinistraDesplegable ? 'rotate-180' : ''">▲</span>
+            </button>
+            <div v-if="puntoMinistraDesplegable" class="mt-1 py-1 pl-12 text-sm space-y-3">
+              <a href="#" class="block font-bold transition-colors" :class="isDarkMode ? 'text-white hover:text-gray-300' : 'text-gray-900 hover:text-red-600'">
+                <span class="mr-1 text-gray-500">•</span> Emitidos
+              </a>
+              <a href="#" class="block font-bold transition-colors" :class="isDarkMode ? 'text-white hover:text-gray-300' : 'text-gray-900 hover:text-red-600'">
+                <span class="mr-1 text-gray-500">•</span> Recibidos
+              </a>
+            </div>
+          </div>
+
+          <!-- ================= MENÚ ADMINISTRADOR ================= -->
           <div v-if="['ADMIN USERS', 'ADMIN GRAL', 'ADMIN GLOBAL'].includes(usuarioActual.rol)">
             <div class="pt-6 pb-2">
               <p class="text-xs font-semibold uppercase tracking-wider" :class="isDarkMode ? 'text-gray-500' : 'text-gray-400'">Administrador</p>
@@ -141,17 +219,13 @@ const logout = () => {
               Ver Usuarios
             </router-link>
 
-            <a href="#" class="flex items-center gap-3 px-4 py-2 rounded-md transition-colors" :class="isDarkMode ? 'text-gray-300 hover:text-white hover:bg-gray-900' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'">
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"></path></svg>
-              Activar Usuarios
-            </a>
-
-            <a href="#" class="flex items-center gap-3 px-4 py-2 rounded-md transition-colors" :class="isDarkMode ? 'text-gray-300 hover:text-white hover:bg-gray-900' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'">
+            <!-- CREAR USUARIOS: Solo RRHH y Dios (El Presidente NO lo ve) -->
+            <router-link v-if="['ADMIN USERS', 'ADMIN GLOBAL'].includes(usuarioActual.rol)" to="/dashboard/usuarios/crear" class="flex items-center gap-3 px-4 py-2 rounded-md transition-colors" :class="isDarkMode ? 'text-gray-300 hover:text-white hover:bg-gray-900' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"></path></svg>
               Crear Usuarios
-            </a>
+            </router-link>
           </div>
-          </nav>
+        </nav>
       </div>
 
       <div class="p-4">

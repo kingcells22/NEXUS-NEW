@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, DateTime, Integer, ForeignKey, Table, JSON
+from sqlalchemy import Column, String, Boolean, DateTime, Integer, ForeignKey, Table, JSON, Text
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
@@ -66,27 +66,33 @@ class Cargo(Base):
 class Centro(Base):
     __tablename__ = "centros"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    nombre = Column(String, unique=True, nullable=False)
-    abreviatura = Column(String, unique=True, nullable=False)
+    id = Column(Integer, primary_key=True, index=True)
+    nombre = Column(String(100), unique=True, index=True)
+    abreviatura = Column(String(20), unique=True, index=True)
     
+    # === NUEVO: Para saber a qué oficina o jefatura pertenece este centro ===
+    parent_id = Column(Integer, ForeignKey("centros.id"), nullable=True)
+    # =======================================================================
+
     empleados = relationship("Empleado", secondary=empleado_centro, back_populates="centros")
 
 
 class Empleado(Base):
     __tablename__ = "empleados"
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    usuario_id = Column(String, ForeignKey("usuarios.id", ondelete="CASCADE"), unique=True) 
-    cedula = Column(String, unique=True, nullable=False)
-    nombres_apellidos = Column(String, nullable=False)
-    fecha_ingreso = Column(DateTime, nullable=False)
+    id = Column(Integer, primary_key=True, index=True)
+    cedula = Column(String(20), unique=True, index=True)
+    nombres_apellidos = Column(String(100))
+    fecha_ingreso = Column(DateTime)
+    
+    # === NUEVOS CAMPOS PARA LA REDACCIÓN AUTOMÁTICA ===
+    genero = Column(String(1)) # 'M' o 'F'
+    titulo = Column(String(50)) # 'ING', 'DR', 'DRA', 'LIC', 'ABG', 'MINISTRA', etc.
+    # ==================================================
 
-    # --- NUEVOS CAMPOS ---
-    tipo_nomina_id = Column(Integer, ForeignKey("tipos_nomina.id", ondelete="SET NULL"), nullable=True)
-    firma_visual_url = Column(String(500), nullable=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    tipo_nomina_id = Column(Integer, ForeignKey("tipos_nomina.id"))
 
-    # Relaciones
     usuario = relationship("Usuario", back_populates="empleado")
     tipo_nomina = relationship("TipoNomina", back_populates="empleados")
     cargos = relationship("Cargo", secondary=empleado_cargo, back_populates="empleados")
@@ -194,3 +200,25 @@ class PlantillaPDF(Base):
     tipo_documento = Column(String(50), unique=True, index=True, nullable=False) 
     nombre_archivo = Column(String(100), nullable=False) 
     coordenadas = Column(JSON, nullable=False)
+
+class Documento(Base):
+    __tablename__ = "documentos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tipo = Column(String(50), nullable=False) 
+    correlativo = Column(String(100), unique=True, index=True, nullable=True) 
+    asunto = Column(String(200), nullable=False)
+    cuerpo = Column(Text, nullable=False)
+    fecha_creacion = Column(DateTime, default=datetime.utcnow)
+    estado = Column(String(30), default="BORRADOR") 
+
+    # === CORRECCIÓN AQUÍ: String en lugar de Integer ===
+    emisor_id = Column(String, ForeignKey("empleados.id"), nullable=False)
+    receptor_id = Column(String, ForeignKey("empleados.id"), nullable=False)
+    # ===================================================
+
+    documento_padre_id = Column(Integer, ForeignKey("documentos.id"), nullable=True)
+
+    emisor = relationship("Empleado", foreign_keys=[emisor_id])
+    receptor = relationship("Empleado", foreign_keys=[receptor_id])
+    documento_padre = relationship("Documento", remote_side=[id], backref="derivados")

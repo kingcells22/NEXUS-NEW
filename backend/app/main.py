@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from datetime import datetime, timedelta
 from fastapi.responses import Response
+from pydantic import BaseModel
 import io
 import os
 import shutil
@@ -653,3 +654,63 @@ def deshabilitar_usuario_admin(cedula: str, db: Session = Depends(get_db), usuar
     
     accion = "habilitado" if usuario.estado else "deshabilitado"
     return {"mensaje": f"El usuario ha sido {accion} exitosamente."}
+
+class EmpleadoRRHH(BaseModel):
+    cedula: str
+    nombres_apellidos: str
+    fecha_ingreso: str
+    cargo: str
+    centro: str
+    tipo_nomina: str
+    genero: str      # <--- NUEVO
+    titulo: str      # <--- NUEVO
+
+@app.post("/api/admin/empleados")
+def registrar_empleado_nomina(datos: EmpleadoRRHH, db: Session = Depends(get_db), usuario_actual: dict = Depends(get_usuario_actual)):
+    """Ingresa un nuevo trabajador a la base de datos para que luego pueda reclamar su cuenta web"""
+    
+    if usuario_actual.get("rol") not in ["ADMIN USERS", "ADMIN GRAL", "ADMIN GLOBAL"]:
+        raise HTTPException(status_code=403, detail="Acceso denegado. Solo Recursos Humanos puede ingresar personal.")
+
+    if db.query(models.Empleado).filter(models.Empleado.cedula == datos.cedula).first():
+        raise HTTPException(status_code=400, detail="Esta cédula ya está registrada en la nómina de la FIIIDT.")
+
+    tipo_nom = db.query(models.TipoNomina).filter(models.TipoNomina.nombre == datos.tipo_nomina.upper()).first()
+    if not tipo_nom:
+        tipo_nom = models.TipoNomina(nombre=datos.tipo_nomina.upper())
+        db.add(tipo_nom)
+        db.flush()
+
+    cargo_db = db.query(models.Cargo).filter(models.Cargo.nombre == datos.cargo.upper()).first()
+    if not cargo_db:
+        cargo_db = models.Cargo(nombre=datos.cargo.upper())
+        db.add(cargo_db)
+        db.flush()
+
+    centro_db = db.query(models.Centro).filter(models.Centro.nombre == datos.centro.upper()).first()
+    if not centro_db:
+        centro_db = models.Centro(nombre=datos.centro.upper(), abreviatura=datos.centro.upper()[:15])
+        db.add(centro_db)
+        db.flush()
+
+    try:
+        fecha_obj = datetime.strptime(datos.fecha_ingreso, "%Y-%m-%d")
+    except ValueError:
+        fecha_obj = datetime.utcnow()
+
+    # === INYECTAMOS GÉNERO Y TÍTULO AL CREARLO ===
+    nuevo_emp = models.Empleado(
+        cedula=datos.cedula,
+        nombres_apellidos=datos.nombres_apellidos.upper(),
+        fecha_ingreso=fecha_obj,
+        tipo_nomina_id=tipo_nom.id,
+        genero=datos.genero.upper(),
+        titulo=datos.titulo.upper()
+    )
+    nuevo_emp.cargos.append(cargo_db)
+    nuevo_emp.centros.append(centro_db)
+
+    db.add(nuevo_emp)
+    db.commit()
+
+    return {"mensaje": "Personal ingresado a nómina exitosamente. Ya puede registrar su cuenta web."}

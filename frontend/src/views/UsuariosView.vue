@@ -1,13 +1,33 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue';
 
-const usuarios = ref([]);
+// 1. Le decimos a TypeScript exactamente qué datos trae cada usuario
+interface UsuarioListado {
+  cedula: string;
+  nombres_apellidos: string;
+  fecha_ingreso: string;
+  correo: string;
+  estado: boolean;
+  tiene_cuenta: boolean;
+}
+
+// 2. Aplicamos la interfaz al ref para que desaparezcan los errores rojos
+const usuarios = ref<UsuarioListado[]>([]);
 const busqueda = ref('');
 const cargando = ref(true);
+const miRol = ref(''); // <--- NUEVA VARIABLE
 
 const obtenerUsuarios = async () => {
   try {
     const token = localStorage.getItem('nexus_token') || localStorage.getItem('token');
+    
+    // Capturamos el rol de quien está viendo la tabla
+    const meResponse = await fetch('http://127.0.0.1:8000/api/me', { headers: { 'Authorization': `Bearer ${token}` } });
+    if(meResponse.ok) {
+      const meData = await meResponse.json();
+      miRol.value = meData.rol;
+    }
+
     const response = await fetch('http://127.0.0.1:8000/api/admin/usuarios', {
       headers: { 'Authorization': `Bearer ${token}` }
     });
@@ -51,7 +71,7 @@ onMounted(() => {
   obtenerUsuarios();
 });
 
-// Filtro de búsqueda en tiempo real
+// Filtro de búsqueda en tiempo real (TS ya no se quejará aquí)
 const usuariosFiltrados = computed(() => {
   return usuarios.value.filter(u => 
     u.nombres_apellidos.toLowerCase().includes(busqueda.value.toLowerCase()) ||
@@ -61,10 +81,18 @@ const usuariosFiltrados = computed(() => {
 </script>
 
 <template>
-  <div class="h-full flex flex-col space-y-6">
-    <div>
-      <h2 class="text-2xl font-bold text-white mb-2">Usuarios del sistema</h2>
-      <p class="text-sm text-gray-400">Inicio > <span class="text-white">Empleados</span></p>
+  <div class="h-full flex flex-col space-y-4">
+    
+    <div class="flex items-center justify-between">
+      <router-link to="/dashboard" class="inline-flex items-center gap-2 text-gray-400 hover:text-red-500 transition-colors font-medium text-sm bg-[#141414] border border-gray-800 px-4 py-2 rounded-md hover:bg-gray-900">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+        Volver al Inicio
+      </router-link>
+
+      <div class="text-right">
+        <h2 class="text-2xl font-bold text-white mb-1">Usuarios del sistema</h2>
+        <p class="text-sm text-gray-500">Gestión de Accesos y Credenciales</p>
+      </div>
     </div>
 
     <div class="bg-[#0a0a0a] border border-gray-800 rounded-lg shadow-xl flex-1 flex flex-col overflow-hidden">
@@ -109,16 +137,17 @@ const usuariosFiltrados = computed(() => {
               <td class="px-6 py-4 text-gray-400">{{ user.fecha_ingreso }}</td>
               <td class="px-6 py-4 text-gray-400">{{ user.correo }}</td>
               <td class="px-6 py-4">
-                <div class="flex items-center justify-center gap-4">
+                
+                <div v-if="['ADMIN USERS', 'ADMIN GLOBAL'].includes(miRol)" class="flex items-center justify-center gap-4">
                   <button 
                     v-if="user.tiene_cuenta"
                     @click="alternarEstadoUsuario(user.cedula)"
-                    class="text-xs font-bold px-3 py-1.5 rounded transition-colors"
+                    class="text-xs font-bold px-3 py-1.5 rounded transition-colors min-w-[90px]"
                     :class="user.estado ? 'bg-red-900/30 text-red-500 hover:bg-red-600 hover:text-white border border-red-900/50' : 'bg-green-900/30 text-green-500 hover:bg-green-600 hover:text-white border border-green-900/50'"
                   >
                     {{ user.estado ? 'Deshabilitar' : 'Habilitar' }}
                   </button>
-                  <span v-else class="text-xs text-gray-600 italic border border-gray-800 px-3 py-1.5 rounded">
+                  <span v-else class="text-xs text-gray-600 italic border border-gray-800 px-3 py-1.5 rounded bg-gray-900/20">
                     Sin registrar
                   </span>
 
@@ -126,6 +155,13 @@ const usuariosFiltrados = computed(() => {
                     Eliminar
                   </button>
                 </div>
+
+                <div v-else class="flex items-center justify-center gap-4">
+                  <span v-if="!user.tiene_cuenta" class="text-xs text-gray-600 italic border border-gray-800 px-3 py-1.5 rounded bg-gray-900/20">Sin registrar</span>
+                  <span v-else-if="user.estado" class="text-xs text-green-500 font-bold bg-green-900/20 px-3 py-1.5 rounded border border-green-900/50">Activo</span>
+                  <span v-else class="text-xs text-red-500 font-bold bg-red-900/20 px-3 py-1.5 rounded border border-red-900/50">Inactivo</span>
+                </div>
+                
               </td>
             </tr>
           </tbody>

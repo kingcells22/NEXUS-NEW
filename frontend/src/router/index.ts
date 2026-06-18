@@ -36,6 +36,11 @@ const router = createRouter({
           component: EmitidosView
         },
         {
+          path: 'usuarios/crear',
+          name: 'crear-usuario',
+          component: () => import('../views/CrearUsuarioView.vue')
+        },
+        {
           path: 'usuarios',
           name: 'usuarios',
           component: () => import('../views/UsuariosView.vue') // Luego crearemos este archivo

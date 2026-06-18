@@ -144,7 +144,9 @@ const procesarRegistro = async () => {
         </div>
         
         <div class="text-center mt-4">
-          <a href="/login" class="text-sm text-red-500 hover:text-red-400">¿Ya tienes cuenta? Inicia Sesión</a>
+          <router-link to="/" class="text-sm text-red-500 hover:text-red-400 transition-colors font-medium">
+            ¿Ya tienes cuenta? Inicia Sesión
+          </router-link>
         </div>
       </div>
 
