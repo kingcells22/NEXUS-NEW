@@ -5,6 +5,7 @@ import RecuperarPasswordView from '../views/RecuperarPasswordView.vue'
 import DashboardView from '../views/DashboardView.vue'
 import EmitidosView from '../views/EmitidosView.vue' // <-- 1. Importamos la bandeja
 import RedactarMemorandum from '../views/RedactarMemorandum.vue' // <-- 2. Importamos el formulario
+import RecibidosView from '../views/RecibidosView.vue' // <-- 3. NUEVO: Importamos la bandeja de entrada
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -35,6 +36,13 @@ const router = createRouter({
           name: 'emitidos',
           component: EmitidosView
         },
+        // === NUEVA RUTA DE RECIBIDOS ===
+        {
+          path: 'recibidos',
+          name: 'recibidos',
+          component: RecibidosView
+        },
+        // ===============================
         {
           path: 'usuarios/crear',
           name: 'crear-usuario',
@@ -43,7 +51,7 @@ const router = createRouter({
         {
           path: 'usuarios',
           name: 'usuarios',
-          component: () => import('../views/UsuariosView.vue') // Luego crearemos este archivo
+          component: () => import('../views/UsuariosView.vue')
         },
         {
           path: 'redactar-memo',

@@ -110,9 +110,9 @@ const logout = () => {
               <router-link to="/dashboard/emitidos" class="block font-bold transition-colors" :class="isDarkMode ? 'text-white hover:text-gray-300' : 'text-gray-900 hover:text-red-600'">
                 <span class="mr-1 text-gray-500">•</span> Emitidos
               </router-link>
-              <a href="#" class="block font-bold transition-colors" :class="isDarkMode ? 'text-white hover:text-gray-300' : 'text-gray-900 hover:text-red-600'">
+              <router-link to="/dashboard/recibidos" class="block font-bold transition-colors" :class="isDarkMode ? 'text-white hover:text-gray-300' : 'text-gray-900 hover:text-red-600'">
                 <span class="mr-1 text-gray-500">•</span> Recibidos
-              </a>
+              </router-link>
             </div>
           </div>
 
